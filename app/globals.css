@@ -1,26 +1,44 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #070712;
+  --foreground: #f6f2ff;
+  --card: #121229;
+  --card-soft: #1a1a38;
+  --primary: #9d6bff;
+  --primary-strong: #7f4eff;
+  --border-soft: #2f2f59;
+  --muted: #c8b7f9;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-soft: var(--card-soft);
+  --color-primary: var(--primary);
+  --color-primary-strong: var(--primary-strong);
+  --color-border-soft: var(--border-soft);
+  --color-muted: var(--muted);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+.dezy-bg {
+  background:
+    radial-gradient(circle at 15% 15%, rgba(157, 107, 255, 0.35), transparent 35%),
+    radial-gradient(circle at 80% 0%, rgba(127, 78, 255, 0.35), transparent 30%),
+    linear-gradient(180deg, #090917 0%, #070712 100%);
+}
+
+.glass-panel {
+  background: rgba(18, 18, 41, 0.9);
+  border: 1px solid rgba(157, 107, 255, 0.35);
+  box-shadow: 0 20px 45px rgba(8, 7, 20, 0.5);
 }
