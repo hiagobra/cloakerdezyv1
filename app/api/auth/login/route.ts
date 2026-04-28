@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 import { isTrustedOrigin } from "@/lib/security/request-guard";
+import { persistProfile } from "@/lib/auth/profile";
 
 type LoginBody = {
   email?: string;
@@ -36,17 +37,7 @@ export async function POST(request: Request) {
     return Response.json({ error: signInResult.error.message }, { status: 401 });
   }
 
-  const user = signInResult.data.user;
-  if (user) {
-    await supabase.from("profiles").upsert(
-      {
-        id: user.id,
-        email: user.email ?? email,
-        last_seen_at: new Date().toISOString(),
-      },
-      { onConflict: "id" },
-    );
-  }
+  await persistProfile(supabase, signInResult.data.user, { fallbackEmail: email });
   return Response.json({ ok: true });
 }
 

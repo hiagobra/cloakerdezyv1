@@ -2,12 +2,18 @@ import { createClient } from "@/lib/supabase/server";
 import { isValidE164, normalizePhone } from "@/lib/auth/phone";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 import { isTrustedOrigin } from "@/lib/security/request-guard";
+import { persistProfile } from "@/lib/auth/profile";
 
 type RegisterBody = {
   email?: string;
   password?: string;
   phone?: string;
 };
+
+function isAuthRateLimitError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes("rate limit") || lower.includes("too many requests");
+}
 
 export async function POST(request: Request) {
   if (!isTrustedOrigin(request)) {
@@ -52,27 +58,43 @@ export async function POST(request: Request) {
   });
 
   if (signUpResult.error) {
+    if (isAuthRateLimitError(signUpResult.error.message)) {
+      return Response.json(
+        {
+          error:
+            "Limite temporario de cadastro por email atingido. Aguarde 60 segundos e tente novamente.",
+        },
+        { status: 429, headers: { "Retry-After": "60" } },
+      );
+    }
+
     return Response.json({ error: signUpResult.error.message }, { status: 400 });
+  }
+
+  const signedUser = signUpResult.data.user;
+  const signedSession = signUpResult.data.session;
+
+  if (signedSession && signedUser) {
+    await persistProfile(supabase, signedUser, { fallbackEmail: email, phone });
+    return Response.json({ ok: true });
   }
 
   const signInResult = await supabase.auth.signInWithPassword({ email, password });
   if (signInResult.error) {
+    if (isAuthRateLimitError(signInResult.error.message)) {
+      return Response.json(
+        {
+          error:
+            "Cadastro criado, mas o login automatico foi temporariamente limitado. Tente entrar em alguns segundos.",
+        },
+        { status: 429, headers: { "Retry-After": "60" } },
+      );
+    }
+
     return Response.json({ error: signInResult.error.message }, { status: 401 });
   }
 
-  const user = signInResult.data.user;
-  if (user) {
-    await supabase.from("profiles").upsert(
-      {
-        id: user.id,
-        email: user.email ?? email,
-        phone,
-        last_seen_at: new Date().toISOString(),
-      },
-      { onConflict: "id" },
-    );
-  }
-
+  await persistProfile(supabase, signInResult.data.user, { fallbackEmail: email, phone });
   return Response.json({ ok: true });
 }
 

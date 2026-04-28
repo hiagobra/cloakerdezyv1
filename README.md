@@ -1,5 +1,96 @@
 # CloakerDezy
 
+App Next.js para cadastro/login (Supabase Auth), upload de video, camuflagem e download com token assinado.
+
+## Stack
+
+- Next.js 16 + TypeScript
+- Supabase (Auth + Postgres + RLS)
+- Pipeline de camuflagem em Python (uso local)
+
+## 1) Rodar localmente
+
+### 1.1 Instalar dependencias
+
+```bash
+npm.cmd install
+```
+
+### 1.2 Configurar `.env.local`
+
+Copie `.env.local.example` e preencha:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_xxxxx
+DOWNLOAD_TOKEN_SECRET=troque-por-um-segredo-longo
+ADMIN_ALLOWED_PHONES=+5511999999999
+AUDIO_POC_PATH=C:/Users/hiago/Downloads/www.maskai.co/audio-encryption-poc
+CAMOUFLAGE_STORAGE_DIR=C:/Users/hiago/Desktop/cloakerdezy/.runtime-storage
+```
+
+### 1.3 Iniciar app
+
+Terminal 1:
+
+```bash
+npm.cmd run dev
+```
+
+Terminal 2 (opcional para local):
+
+```bash
+npm.cmd run worker:camouflage
+```
+
+Abra `http://localhost:3000`.
+
+## 2) Configurar Supabase
+
+1. Crie o projeto no Supabase.
+2. Pegue URL e Publishable Key em **Project Settings > API**.
+3. Execute no SQL Editor:
+   - `supabase/schema.sql`
+4. Verifique:
+   - `supabase/verify-rls.sql`
+
+### Cadastro travando com `email rate limit exceeded`
+
+Para destravar testes rapidamente:
+
+1. Supabase Dashboard -> **Authentication** -> **Providers** -> **Email**
+2. Desative temporariamente confirmação obrigatoria de email.
+3. Teste cadastro/login novamente.
+
+Para producao, reative confirmacao e use SMTP proprio com ajuste de rate limits.
+
+## 3) Fluxo funcional esperado
+
+1. `/register`: email + senha + telefone
+2. `/login`: email + senha
+3. `/dashboard`: upload, processar, baixar
+4. `profiles`: salva `email`, `phone`, `last_seen_at`
+
+## 4) Deploy na Vercel
+
+Em **Project Settings > Environment Variables** (Production e Preview):
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `DOWNLOAD_TOKEN_SECRET`
+- `ADMIN_ALLOWED_PHONES` (opcional)
+
+Depois clique em **Redeploy**.
+
+## 5) Checklist rapido de producao
+
+- `npm.cmd run lint`
+- `npm.cmd run build`
+- cadastro/login sem 500
+- dashboard acessando com sessao valida
+- download somente por URL assinada
+# CloakerDezy
+
 Dashboard de upload/camuflagem de videos com autenticacao via Supabase (email+senha), persistencia de perfil (email+telefone) e download protegido por token assinado.
 
 ## Stack
