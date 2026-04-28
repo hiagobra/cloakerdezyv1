@@ -33,9 +33,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  // #region agent log
-  fetch("http://127.0.0.1:7601/ingest/7c957bce-b281-426c-bb97-f528a3634ed5",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"ec05a3"},body:JSON.stringify({sessionId:"ec05a3",runId:"precheck-1",hypothesisId:"H3",location:"app/api/camouflage/route.ts:36",message:"Camouflage create entry",data:{contentType:request.headers.get("content-type")??"",hasOrigin:Boolean(request.headers.get("origin"))},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   if (!isTrustedOrigin(request)) {
     return Response.json({ error: "Origem nao autorizada." }, { status: 403 });
   }
@@ -67,9 +64,6 @@ export async function POST(request: Request) {
   try {
     const bytes = await file.arrayBuffer();
     const job = await createJob(file.name, preset, Buffer.from(bytes));
-    // #region agent log
-    fetch("http://127.0.0.1:7601/ingest/7c957bce-b281-426c-bb97-f528a3634ed5",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"ec05a3"},body:JSON.stringify({sessionId:"ec05a3",runId:"precheck-1",hypothesisId:"H3",location:"app/api/camouflage/route.ts:70",message:"Camouflage job created",data:{jobId:job.id,preset,fileSizeBytes:bytes.byteLength},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     return Response.json({ jobId: job.id, status: job.status });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao camuflar arquivo.";

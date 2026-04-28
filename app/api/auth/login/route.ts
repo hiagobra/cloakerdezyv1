@@ -8,9 +8,6 @@ type LoginBody = {
 };
 
 export async function POST(request: Request) {
-  // #region agent log
-  fetch("http://127.0.0.1:7601/ingest/7c957bce-b281-426c-bb97-f528a3634ed5",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"ec05a3"},body:JSON.stringify({sessionId:"ec05a3",runId:"precheck-1",hypothesisId:"H2",location:"app/api/auth/login/route.ts:12",message:"Login route entry",data:{hasOrigin:Boolean(request.headers.get("origin")),hasHost:Boolean(request.headers.get("host"))},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   if (!isTrustedOrigin(request)) {
     return Response.json({ error: "Origem nao autorizada." }, { status: 403 });
   }
@@ -28,9 +25,6 @@ export async function POST(request: Request) {
   const data = (await request.json()) as LoginBody;
   const email = String(data.email ?? "").trim();
   const password = String(data.password ?? "");
-  // #region agent log
-  fetch("http://127.0.0.1:7601/ingest/7c957bce-b281-426c-bb97-f528a3634ed5",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"ec05a3"},body:JSON.stringify({sessionId:"ec05a3",runId:"precheck-1",hypothesisId:"H2",location:"app/api/auth/login/route.ts:31",message:"Login payload parsed",data:{emailLength:email.length,hasPassword:Boolean(password),ip},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
 
   if (!email || !password) {
     return Response.json({ error: "Informe email e senha." }, { status: 400 });
@@ -53,9 +47,6 @@ export async function POST(request: Request) {
       { onConflict: "id" },
     );
   }
-  // #region agent log
-  fetch("http://127.0.0.1:7601/ingest/7c957bce-b281-426c-bb97-f528a3634ed5",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"ec05a3"},body:JSON.stringify({sessionId:"ec05a3",runId:"precheck-1",hypothesisId:"H2",location:"app/api/auth/login/route.ts:47",message:"Login success response",data:{sessionEstablished:true},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   return Response.json({ ok: true });
 }
 

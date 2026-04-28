@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { getJob } from "@/lib/camouflage/job-store";
 import { verifyDownloadToken } from "@/lib/security/download-token";
+import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 
 type RouteContext = {
   params: Promise<{ jobId: string }>;
@@ -23,11 +24,17 @@ function getContentType(filePath: string): string {
 }
 
 export async function GET(request: Request, context: RouteContext) {
+  const clientIp = getClientIp(request.headers);
+  const rate = checkRateLimit(`camouflage:download:${clientIp}`, 30, 60_000);
+  if (!rate.allowed) {
+    return Response.json(
+      { error: "Muitas requisicoes de download." },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+    );
+  }
+
   const { jobId } = await context.params;
   const token = new URL(request.url).searchParams.get("token") ?? undefined;
-  // #region agent log
-  fetch("http://127.0.0.1:7601/ingest/7c957bce-b281-426c-bb97-f528a3634ed5",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"ec05a3"},body:JSON.stringify({sessionId:"ec05a3",runId:"precheck-1",hypothesisId:"H5",location:"app/api/camouflage/[jobId]/download/route.ts:30",message:"Download request received",data:{jobId,hasToken:Boolean(token)},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
 
   if (!verifyDownloadToken(token, jobId)) {
     return Response.json({ error: "Token de download invalido ou expirado." }, { status: 403 });
@@ -41,9 +48,6 @@ export async function GET(request: Request, context: RouteContext) {
   const outputBuffer = await fs.readFile(job.outputPath);
   const outputName = path.basename(job.outputPath);
   const contentType = getContentType(job.outputPath);
-  // #region agent log
-  fetch("http://127.0.0.1:7601/ingest/7c957bce-b281-426c-bb97-f528a3634ed5",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"ec05a3"},body:JSON.stringify({sessionId:"ec05a3",runId:"precheck-1",hypothesisId:"H5",location:"app/api/camouflage/[jobId]/download/route.ts:44",message:"Download response sent",data:{jobId,outputName,contentType,sizeBytes:outputBuffer.byteLength},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
 
   return new Response(outputBuffer, {
     headers: {

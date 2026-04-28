@@ -2,12 +2,17 @@ import { createDownloadToken } from "@/lib/security/download-token";
 import { claimJobById, getJob, saveJob } from "@/lib/camouflage/job-store";
 import { processJob } from "@/lib/camouflage/processor";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
+import { isTrustedOrigin } from "@/lib/security/request-guard";
 
 type RouteContext = {
   params: Promise<{ jobId: string }>;
 };
 
 export async function GET(request: Request, context: RouteContext) {
+  if (!isTrustedOrigin(request)) {
+    return Response.json({ error: "Origem nao autorizada." }, { status: 403 });
+  }
+
   const clientIp = getClientIp(request.headers);
   const rate = checkRateLimit(`camouflage:status:${clientIp}`, 120, 60_000);
   if (!rate.allowed) {
@@ -48,9 +53,6 @@ export async function GET(request: Request, context: RouteContext) {
     downloadUrl = `/api/camouflage/${job.id}/download?token=${encodeURIComponent(token)}`;
   }
 
-  // #region agent log
-  fetch("http://127.0.0.1:7601/ingest/7c957bce-b281-426c-bb97-f528a3634ed5",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"ec05a3"},body:JSON.stringify({sessionId:"ec05a3",runId:"precheck-1",hypothesisId:"H4",location:"app/api/camouflage/[jobId]/route.ts:44",message:"Camouflage status returned",data:{jobId,status:job.status,hasOutput:Boolean(job.outputPath),hasError:Boolean(job.error)},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   return Response.json({
     id: job.id,
     fileName: job.fileName,

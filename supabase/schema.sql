@@ -24,6 +24,7 @@ create table if not exists public.admin_allowlist (
 create or replace function public.handle_updated_at()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   new.updated_at = timezone('utc', now());
@@ -60,6 +61,13 @@ after insert on auth.users
 for each row
 execute function public.handle_new_user();
 
+revoke execute on function public.handle_new_user() from public;
+revoke execute on function public.handle_new_user() from anon;
+revoke execute on function public.handle_new_user() from authenticated;
+revoke execute on function public.handle_updated_at() from public;
+revoke execute on function public.handle_updated_at() from anon;
+revoke execute on function public.handle_updated_at() from authenticated;
+
 alter table public.profiles enable row level security;
 alter table public.admin_allowlist enable row level security;
 
@@ -68,22 +76,22 @@ create policy "users_view_own_profile"
 on public.profiles
 for select
 to authenticated
-using (auth.uid() = id);
+using ((select auth.uid()) = id);
 
 drop policy if exists "users_update_own_profile" on public.profiles;
 create policy "users_update_own_profile"
 on public.profiles
 for update
 to authenticated
-using (auth.uid() = id)
-with check (auth.uid() = id);
+using ((select auth.uid()) = id)
+with check ((select auth.uid()) = id);
 
 drop policy if exists "users_insert_own_profile" on public.profiles;
 create policy "users_insert_own_profile"
 on public.profiles
 for insert
 to authenticated
-with check (auth.uid() = id);
+with check ((select auth.uid()) = id);
 
 drop policy if exists "admins_view_all_profiles" on public.profiles;
 create policy "admins_view_all_profiles"
@@ -94,7 +102,7 @@ using (
   exists (
     select 1
     from public.admin_allowlist a
-    where a.phone = (auth.jwt() ->> 'phone')
+    where a.phone = ((select auth.jwt()) ->> 'phone')
   )
 );
 
@@ -107,7 +115,7 @@ using (
   exists (
     select 1
     from public.admin_allowlist a
-    where a.phone = (auth.jwt() ->> 'phone')
+    where a.phone = ((select auth.jwt()) ->> 'phone')
   )
 );
 
