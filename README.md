@@ -2,6 +2,8 @@
 
 App Next.js 16 com cadastro/login Supabase, fluxo de aprovação manual pelo admin e dashboard com upload e camuflagem de vídeos.
 
+> Produção: [https://cloakerdezyv1.vercel.app](https://cloakerdezyv1.vercel.app)
+
 ## Stack
 
 - Next.js 16 (App Router) + TypeScript

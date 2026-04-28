@@ -37,8 +37,10 @@ create unique index if not exists profiles_email_unique_idx on public.profiles (
 create index if not exists profiles_status_idx on public.profiles (status);
 create index if not exists profiles_phone_idx on public.profiles (phone);
 
+-- Remove unique constraint herdada do schema antigo: telefone nao deve ser unico.
+alter table public.profiles drop constraint if exists profiles_phone_key;
+
 drop policy if exists "admins_view_all_profiles" on public.profiles;
-drop policy if exists "admins_view_allowlist" on public.admin_allowlist;
 drop table if exists public.admin_allowlist cascade;
 
 create or replace function public.handle_updated_at()

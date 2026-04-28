@@ -1,0 +1,7 @@
+Retrieving project…
+Retrieving project…
+Saving
+Overrode Environment Variable SUPABASE_SERVICE_ROLE_KEY to Project cloakerdezyv1 [317ms]
+Common next commands:
+- `vercel env ls`
+- `vercel env pull`
