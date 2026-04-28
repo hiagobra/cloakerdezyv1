@@ -1,19 +1,13 @@
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { isValidE164, normalizePhone } from "@/lib/auth/phone";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 import { isTrustedOrigin } from "@/lib/security/request-guard";
-import { persistProfile } from "@/lib/auth/profile";
 
 type RegisterBody = {
   email?: string;
   password?: string;
   phone?: string;
 };
-
-function isAuthRateLimitError(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes("rate limit") || lower.includes("too many requests");
-}
 
 export async function POST(request: Request) {
   if (!isTrustedOrigin(request)) {
@@ -22,7 +16,6 @@ export async function POST(request: Request) {
 
   const ip = getClientIp(request.headers);
   const rate = checkRateLimit(`auth:register:${ip}`, 5, 60_000);
-
   if (!rate.allowed) {
     return Response.json(
       { error: "Muitas tentativas de cadastro. Aguarde alguns segundos." },
@@ -30,13 +23,21 @@ export async function POST(request: Request) {
     );
   }
 
-  const data = (await request.json()) as RegisterBody;
-  const email = String(data.email ?? "").trim();
+  const data = (await request.json().catch(() => null)) as RegisterBody | null;
+  if (!data) {
+    return Response.json({ error: "Payload invalido." }, { status: 400 });
+  }
+
+  const email = String(data.email ?? "").trim().toLowerCase();
   const password = String(data.password ?? "");
   const phone = normalizePhone(String(data.phone ?? ""));
 
   if (!email || !password || !phone) {
     return Response.json({ error: "Informe email, senha e telefone." }, { status: 400 });
+  }
+
+  if (password.length < 8) {
+    return Response.json({ error: "A senha precisa ter pelo menos 8 caracteres." }, { status: 400 });
   }
 
   if (!isValidE164(phone)) {
@@ -46,55 +47,56 @@ export async function POST(request: Request) {
     );
   }
 
-  const supabase = await createClient();
-  const signUpResult = await supabase.auth.signUp({
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Service Role indisponivel.";
+    return Response.json({ error: message }, { status: 500 });
+  }
+
+  const createResult = await admin.auth.admin.createUser({
     email,
     password,
-    options: {
-      data: {
-        phone,
-      },
-    },
+    email_confirm: true,
+    user_metadata: { phone },
   });
 
-  if (signUpResult.error) {
-    if (isAuthRateLimitError(signUpResult.error.message)) {
+  if (createResult.error || !createResult.data.user) {
+    const message = createResult.error?.message ?? "Falha ao criar usuario.";
+    const lower = message.toLowerCase();
+    if (lower.includes("already registered") || lower.includes("duplicate")) {
       return Response.json(
-        {
-          error:
-            "Limite temporario de cadastro por email atingido. Aguarde 60 segundos e tente novamente.",
-        },
-        { status: 429, headers: { "Retry-After": "60" } },
+        { error: "Ja existe um cadastro com este email." },
+        { status: 409 },
       );
     }
-
-    return Response.json({ error: signUpResult.error.message }, { status: 400 });
+    return Response.json({ error: message }, { status: 400 });
   }
 
-  const signedUser = signUpResult.data.user;
-  const signedSession = signUpResult.data.session;
+  const user = createResult.data.user;
 
-  if (signedSession && signedUser) {
-    await persistProfile(supabase, signedUser, { fallbackEmail: email, phone });
-    return Response.json({ ok: true });
+  const { error: profileError } = await admin
+    .from("profiles")
+    .upsert(
+      {
+        id: user.id,
+        email: user.email ?? email,
+        phone,
+        status: "pending",
+        last_seen_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    );
+
+  if (profileError) {
+    return Response.json({ error: profileError.message }, { status: 500 });
   }
 
-  const signInResult = await supabase.auth.signInWithPassword({ email, password });
-  if (signInResult.error) {
-    if (isAuthRateLimitError(signInResult.error.message)) {
-      return Response.json(
-        {
-          error:
-            "Cadastro criado, mas o login automatico foi temporariamente limitado. Tente entrar em alguns segundos.",
-        },
-        { status: 429, headers: { "Retry-After": "60" } },
-      );
-    }
-
-    return Response.json({ error: signInResult.error.message }, { status: 401 });
-  }
-
-  await persistProfile(supabase, signInResult.data.user, { fallbackEmail: email, phone });
-  return Response.json({ ok: true });
+  return Response.json({
+    ok: true,
+    status: "pending",
+    message:
+      "Cadastro recebido. Voce podera entrar assim que o administrador aprovar o acesso.",
+  });
 }
-

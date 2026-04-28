@@ -7,7 +7,6 @@ import { useState } from "react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -24,7 +23,7 @@ export default function LoginPage() {
             priority
           />
           <h1 className="text-2xl font-semibold">Entrar na CloakerDezy</h1>
-          <p className="text-sm text-muted">Preencha seus dados para continuar.</p>
+          <p className="text-sm text-muted">Use seu email e senha cadastrados.</p>
         </div>
 
         <form
@@ -37,30 +36,31 @@ export default function LoginPage() {
 
             setLoading(true);
             setError("");
-            setMessage("");
 
-            const response = await fetch("/api/auth/login", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email, password }),
-            });
+            try {
+              const response = await fetch("/api/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password }),
+              });
 
-            if (!response.ok) {
-              let reason = "Nao foi possivel entrar.";
-              try {
-                const data = (await response.json()) as { error?: string };
-                reason = data.error ?? reason;
-              } catch {
-                // Keep default message when response is not JSON.
+              const data = (await response.json().catch(() => ({}))) as {
+                error?: string;
+                role?: "admin" | "user";
+              };
+
+              if (!response.ok) {
+                setError(data.error ?? "Nao foi possivel entrar.");
+                return;
               }
-              setError(reason);
-              setLoading(false);
-              return;
-            }
 
-            setMessage("Login validado com sucesso.");
-            setLoading(false);
-            router.push("/dashboard");
+              router.push(data.role === "admin" ? "/admin" : "/dashboard");
+              router.refresh();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Erro inesperado.");
+            } finally {
+              setLoading(false);
+            }
           }}
         >
           <label className="block text-sm text-muted" htmlFor="email">
@@ -88,7 +88,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-[#100b23] transition hover:bg-primary-strong"
+            className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-[#100b23] transition hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? "Entrando..." : "Entrar"}
           </button>
@@ -104,14 +104,6 @@ export default function LoginPage() {
         {error ? (
           <p className="mt-5 rounded-xl border border-red-400/40 bg-red-950/30 px-4 py-3 text-sm text-red-200">
             {error}
-          </p>
-        ) : null}
-
-        {message ? (
-          <p
-            className="mt-5 rounded-xl border border-emerald-400/40 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-200"
-          >
-            {message}
           </p>
         ) : null}
       </section>

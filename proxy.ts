@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
+import { isAdminEmail } from "@/lib/auth/admin";
 
 const SECURITY_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
@@ -18,7 +19,9 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  const isAdminPath = pathname.startsWith("/admin") || pathname.startsWith("/api/admin");
   const isProtected =
+    isAdminPath ||
     pathname.startsWith("/dashboard") ||
     (pathname.startsWith("/api/camouflage") && !pathname.includes("/download"));
 
@@ -39,10 +42,21 @@ export async function proxy(request: NextRequest) {
       return applySecurityHeaders(NextResponse.redirect(loginUrl));
     }
 
+    if (isAdminPath && isLoggedIn && !isAdminEmail(user?.email)) {
+      if (pathname.startsWith("/api/")) {
+        return applySecurityHeaders(
+          NextResponse.json({ error: "Acesso restrito ao administrador." }, { status: 403 }),
+        );
+      }
+      const deniedUrl = request.nextUrl.clone();
+      deniedUrl.pathname = "/access-denied";
+      return applySecurityHeaders(NextResponse.redirect(deniedUrl));
+    }
+
     if ((pathname === "/login" || pathname === "/register") && isLoggedIn) {
-      const dashboardUrl = request.nextUrl.clone();
-      dashboardUrl.pathname = "/dashboard";
-      return applySecurityHeaders(NextResponse.redirect(dashboardUrl));
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = isAdminEmail(user?.email) ? "/admin" : "/dashboard";
+      return applySecurityHeaders(NextResponse.redirect(redirectUrl));
     }
 
     return applySecurityHeaders(response);
@@ -66,4 +80,3 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
 };
-

@@ -1,18 +1,21 @@
-import { normalizePhone } from "@/lib/auth/phone";
+const FALLBACK_ADMIN_EMAILS = "hiagobrambatti@gmail.com";
 
-const ADMIN_PHONES_ENV = process.env.ADMIN_ALLOWED_PHONES ?? "";
-
-export function getAdminPhones(): string[] {
-  return ADMIN_PHONES_ENV.split(",")
-    .map((phone) => normalizePhone(phone))
+function readAdminEmailsFromEnv(): string[] {
+  const raw = process.env.ADMIN_ALLOWED_EMAILS ?? FALLBACK_ADMIN_EMAILS;
+  return raw
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
 }
 
-export function isAdminPhone(phone?: string | null): boolean {
-  if (!phone) {
+export function getAdminEmails(): string[] {
+  return readAdminEmailsFromEnv();
+}
+
+export function isAdminEmail(email?: string | null): boolean {
+  if (!email) {
     return false;
   }
 
-  const normalized = normalizePhone(phone);
-  return getAdminPhones().includes(normalized);
+  return getAdminEmails().includes(email.trim().toLowerCase());
 }

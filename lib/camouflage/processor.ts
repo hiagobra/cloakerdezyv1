@@ -8,15 +8,14 @@ type PythonOutput = {
   outputPath?: string;
 };
 
-const AUDIO_POC_PATH =
-  process.env.AUDIO_POC_PATH ?? "C:/Users/hiago/Downloads/www.maskai.co/audio-encryption-poc";
+const AUDIO_POC_PATH = process.env.AUDIO_POC_PATH ?? "";
 
 function runPythonProcess(args: string[], env: NodeJS.ProcessEnv): Promise<string> {
   const candidates = ["python", "py"];
 
   return new Promise((resolve, reject) => {
     let index = 0;
-    let lastError = "Python nao encontrado.";
+    let lastError = "Python nao encontrado neste ambiente.";
 
     const next = () => {
       if (index >= candidates.length) {
@@ -64,8 +63,28 @@ function runPythonProcess(args: string[], env: NodeJS.ProcessEnv): Promise<strin
   });
 }
 
+async function ensurePipelineAvailable(): Promise<void> {
+  if (!AUDIO_POC_PATH) {
+    throw new Error(
+      "Pipeline de camuflagem nao configurada neste ambiente. Configure AUDIO_POC_PATH localmente para processar videos.",
+    );
+  }
+  try {
+    const stat = await fs.stat(AUDIO_POC_PATH);
+    if (!stat.isDirectory()) {
+      throw new Error("AUDIO_POC_PATH nao aponta para um diretorio valido.");
+    }
+  } catch {
+    throw new Error(
+      "Pipeline de camuflagem indisponivel. Verifique AUDIO_POC_PATH e a instalacao do Python no ambiente local.",
+    );
+  }
+}
+
 export async function processJob(job: CamouflageJob): Promise<CamouflageJob> {
   try {
+    await ensurePipelineAvailable();
+
     const outputDir = path.join(path.dirname(job.inputPath), "output");
     await fs.mkdir(outputDir, { recursive: true });
 
@@ -113,4 +132,3 @@ export async function processJob(job: CamouflageJob): Promise<CamouflageJob> {
     return job;
   }
 }
-

@@ -2,11 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -40,28 +38,33 @@ export default function RegisterPage() {
             setError("");
             setMessage("");
 
-            const response = await fetch("/api/auth/register", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email, password, phone }),
-            });
+            try {
+              const response = await fetch("/api/auth/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password, phone }),
+              });
 
-            if (!response.ok) {
-              let reason = "Nao foi possivel cadastrar.";
-              try {
-                const data = (await response.json()) as { error?: string };
-                reason = data.error ?? reason;
-              } catch {
-                // Keep default message when response is not JSON.
+              const data = (await response.json().catch(() => ({}))) as {
+                error?: string;
+                message?: string;
+              };
+
+              if (!response.ok) {
+                setError(data.error ?? "Nao foi possivel cadastrar.");
+                return;
               }
-              setError(reason);
-              setLoading(false);
-              return;
-            }
 
-            setMessage("Cadastro realizado com sucesso.");
-            setLoading(false);
-            router.push("/dashboard");
+              setMessage(
+                data.message ??
+                  "Cadastro recebido. Voce podera entrar assim que o administrador aprovar.",
+              );
+              event.currentTarget.reset();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Erro inesperado.");
+            } finally {
+              setLoading(false);
+            }
           }}
         >
           <label className="block text-sm text-muted" htmlFor="email">
@@ -76,13 +79,14 @@ export default function RegisterPage() {
             required
           />
           <label className="block text-sm text-muted" htmlFor="password">
-            Senha
+            Senha (minimo 8 caracteres)
           </label>
           <input
             id="password"
             name="password"
             type="password"
             placeholder="Sua senha"
+            minLength={8}
             className="w-full rounded-xl border border-border-soft bg-card-soft px-4 py-3 text-sm outline-none transition focus:border-primary"
             required
           />
@@ -100,7 +104,7 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-[#100b23] transition hover:bg-primary-strong"
+            className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-[#100b23] transition hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? "Cadastrando..." : "Cadastrar"}
           </button>
@@ -128,4 +132,3 @@ export default function RegisterPage() {
     </main>
   );
 }
-
