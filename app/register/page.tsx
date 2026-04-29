@@ -29,7 +29,8 @@ export default function RegisterPage() {
           className="space-y-4"
           onSubmit={async (event) => {
             event.preventDefault();
-            const form = new FormData(event.currentTarget);
+            const formEl = event.currentTarget;
+            const form = new FormData(formEl);
             const email = String(form.get("email") ?? "");
             const password = String(form.get("password") ?? "");
             const phone = String(form.get("phone") ?? "");
@@ -59,7 +60,7 @@ export default function RegisterPage() {
                 data.message ??
                   "Cadastro recebido. Voce podera entrar assim que o administrador aprovar.",
               );
-              event.currentTarget.reset();
+              formEl.reset();
             } catch (err) {
               setError(err instanceof Error ? err.message : "Erro inesperado.");
             } finally {

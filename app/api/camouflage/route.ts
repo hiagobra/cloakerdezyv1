@@ -1,7 +1,25 @@
+import { createClient } from "@/lib/supabase/server";
 import { createDownloadToken } from "@/lib/security/download-token";
-import { createJob, listJobs, type CamouflagePreset } from "@/lib/camouflage/job-store";
+import {
+  createJob,
+  deleteJobsByUser,
+  listJobsByUser,
+  type CamouflagePreset,
+} from "@/lib/camouflage/job-store";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 import { isTrustedOrigin } from "@/lib/security/request-guard";
+
+async function getAuthenticatedUserId(): Promise<string | null> {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(request: Request) {
   const clientIp = getClientIp(request.headers);
@@ -13,7 +31,12 @@ export async function GET(request: Request) {
     );
   }
 
-  const jobs = await listJobs();
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    return Response.json({ error: "Nao autenticado." }, { status: 401 });
+  }
+
+  const jobs = await listJobsByUser(userId);
   return Response.json(
     jobs.map((job) => ({
       id: job.id,
@@ -49,6 +72,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    return Response.json({ error: "Nao autenticado." }, { status: 401 });
+  }
+
   const formData = await request.formData();
   const file = formData.get("file");
   const preset = String(formData.get("preset") ?? "medio") as CamouflagePreset;
@@ -63,10 +91,24 @@ export async function POST(request: Request) {
 
   try {
     const bytes = await file.arrayBuffer();
-    const job = await createJob(file.name, preset, Buffer.from(bytes));
+    const job = await createJob(userId, file.name, preset, Buffer.from(bytes));
     return Response.json({ jobId: job.id, status: job.status });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao camuflar arquivo.";
     return Response.json({ error: message }, { status: 500 });
   }
+}
+
+export async function DELETE(request: Request) {
+  if (!isTrustedOrigin(request)) {
+    return Response.json({ error: "Origem nao autorizada." }, { status: 403 });
+  }
+
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    return Response.json({ error: "Nao autenticado." }, { status: 401 });
+  }
+
+  const removed = await deleteJobsByUser(userId);
+  return Response.json({ ok: true, removed });
 }

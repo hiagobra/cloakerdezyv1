@@ -8,6 +8,7 @@ export type CamouflageStatus = "queued" | "processing" | "done" | "failed";
 
 export type CamouflageJob = {
   id: string;
+  userId: string;
   fileName: string;
   preset: CamouflagePreset;
   createdAt: string;
@@ -18,6 +19,7 @@ export type CamouflageJob = {
   error?: string;
 };
 
+const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const defaultStorage = path.join(os.tmpdir(), "cloakerdezy-storage");
 
 export function getStorageRoot(): string {
@@ -46,7 +48,12 @@ export async function ensureStorageDirs(): Promise<void> {
   await fs.mkdir(getJobsDir(), { recursive: true });
 }
 
-export async function createJob(fileName: string, preset: CamouflagePreset, bytes: Buffer): Promise<CamouflageJob> {
+export async function createJob(
+  userId: string,
+  fileName: string,
+  preset: CamouflagePreset,
+  bytes: Buffer,
+): Promise<CamouflageJob> {
   await ensureStorageDirs();
   const id = randomUUID();
   const dir = getJobDir(id);
@@ -59,6 +66,7 @@ export async function createJob(fileName: string, preset: CamouflagePreset, byte
   const now = new Date().toISOString();
   const job: CamouflageJob = {
     id,
+    userId,
     fileName,
     preset,
     createdAt: now,
@@ -80,9 +88,43 @@ export async function getJob(id: string): Promise<CamouflageJob | null> {
   }
 }
 
+export async function getJobForUser(id: string, userId: string): Promise<CamouflageJob | null> {
+  const job = await getJob(id);
+  if (!job || job.userId !== userId) {
+    return null;
+  }
+  return job;
+}
+
 export async function saveJob(job: CamouflageJob): Promise<void> {
   job.updatedAt = new Date().toISOString();
   await fs.writeFile(getJobMetaPath(job.id), JSON.stringify(job, null, 2), "utf8");
+}
+
+export async function deleteJob(id: string): Promise<void> {
+  const dir = getJobDir(id);
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch {
+    // Diretorio ja removido ou inexistente; ignorar.
+  }
+}
+
+async function pruneExpiredJobs(jobs: CamouflageJob[]): Promise<CamouflageJob[]> {
+  const ttl = DEFAULT_TTL_MS;
+  const now = Date.now();
+  const alive: CamouflageJob[] = [];
+
+  for (const job of jobs) {
+    const age = now - new Date(job.createdAt).getTime();
+    if (Number.isFinite(age) && age > ttl) {
+      await deleteJob(job.id);
+      continue;
+    }
+    alive.push(job);
+  }
+
+  return alive;
 }
 
 export async function listJobs(): Promise<CamouflageJob[]> {
@@ -96,8 +138,26 @@ export async function listJobs(): Promise<CamouflageJob[]> {
     if (job) jobs.push(job);
   }
 
-  jobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return jobs;
+  const fresh = await pruneExpiredJobs(jobs);
+  fresh.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return fresh;
+}
+
+export async function listJobsByUser(userId: string): Promise<CamouflageJob[]> {
+  const jobs = await listJobs();
+  return jobs.filter((job) => job.userId === userId);
+}
+
+export async function deleteJobsByUser(userId: string): Promise<number> {
+  const jobs = await listJobs();
+  let removed = 0;
+  for (const job of jobs) {
+    if (job.userId !== userId) continue;
+    if (job.status === "processing") continue;
+    await deleteJob(job.id);
+    removed += 1;
+  }
+  return removed;
 }
 
 export async function claimQueuedJob(): Promise<CamouflageJob | null> {
@@ -120,4 +180,3 @@ export async function claimJobById(id: string): Promise<CamouflageJob | null> {
   await saveJob(job);
   return job;
 }
-

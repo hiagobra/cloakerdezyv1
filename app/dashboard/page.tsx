@@ -77,6 +77,26 @@ export default function DashboardPage() {
     void loadJobs();
   }, []);
 
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      try {
+        if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+          navigator.sendBeacon("/api/camouflage/cleanup");
+        }
+      } catch {
+        // Ignorar falhas de cleanup ao fechar a aba.
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("pagehide", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("pagehide", handleBeforeUnload);
+    };
+  }, []);
+
   const totals = useMemo(() => {
     const total = jobs.length;
     const processing = jobs.filter((job) => job.status === "processing").length;
@@ -251,6 +271,11 @@ export default function DashboardPage() {
   }
 
   async function signOut() {
+    try {
+      await fetch("/api/camouflage", { method: "DELETE" });
+    } catch {
+      // Mesmo se falhar a limpeza, prosseguir com logout.
+    }
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
   }

@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { getJob } from "@/lib/camouflage/job-store";
+import { createClient } from "@/lib/supabase/server";
+import { getJobForUser } from "@/lib/camouflage/job-store";
 import { verifyDownloadToken } from "@/lib/security/download-token";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 
@@ -23,6 +24,18 @@ function getContentType(filePath: string): string {
   return "application/octet-stream";
 }
 
+async function getAuthenticatedUserId(): Promise<string | null> {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: Request, context: RouteContext) {
   const clientIp = getClientIp(request.headers);
   const rate = checkRateLimit(`camouflage:download:${clientIp}`, 30, 60_000);
@@ -40,7 +53,12 @@ export async function GET(request: Request, context: RouteContext) {
     return Response.json({ error: "Token de download invalido ou expirado." }, { status: 403 });
   }
 
-  const job = await getJob(jobId);
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    return Response.json({ error: "Nao autenticado." }, { status: 401 });
+  }
+
+  const job = await getJobForUser(jobId, userId);
   if (!job || job.status !== "done" || !job.outputPath) {
     return Response.json({ error: "Arquivo indisponivel." }, { status: 404 });
   }
@@ -57,4 +75,3 @@ export async function GET(request: Request, context: RouteContext) {
     },
   });
 }
-

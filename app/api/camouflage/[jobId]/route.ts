@@ -1,5 +1,6 @@
+import { createClient } from "@/lib/supabase/server";
 import { createDownloadToken } from "@/lib/security/download-token";
-import { claimJobById, getJob, saveJob } from "@/lib/camouflage/job-store";
+import { claimJobById, getJobForUser, saveJob } from "@/lib/camouflage/job-store";
 import { processJob } from "@/lib/camouflage/processor";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 import { isTrustedOrigin } from "@/lib/security/request-guard";
@@ -7,6 +8,18 @@ import { isTrustedOrigin } from "@/lib/security/request-guard";
 type RouteContext = {
   params: Promise<{ jobId: string }>;
 };
+
+async function getAuthenticatedUserId(): Promise<string | null> {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(request: Request, context: RouteContext) {
   if (!isTrustedOrigin(request)) {
@@ -22,8 +35,13 @@ export async function GET(request: Request, context: RouteContext) {
     );
   }
 
+  const userId = await getAuthenticatedUserId();
+  if (!userId) {
+    return Response.json({ error: "Nao autenticado." }, { status: 401 });
+  }
+
   const { jobId } = await context.params;
-  let job = await getJob(jobId);
+  let job = await getJobForUser(jobId, userId);
 
   if (!job) {
     return Response.json({ error: "Job nao encontrado." }, { status: 404 });
@@ -34,7 +52,7 @@ export async function GET(request: Request, context: RouteContext) {
     if (claimed) {
       job = await processJob(claimed);
     } else {
-      job = (await getJob(jobId)) ?? job;
+      job = (await getJobForUser(jobId, userId)) ?? job;
     }
   } else if (job.status === "processing") {
     const ageMs = Date.now() - new Date(job.updatedAt).getTime();
@@ -65,4 +83,3 @@ export async function GET(request: Request, context: RouteContext) {
     error: job.error,
   });
 }
-
