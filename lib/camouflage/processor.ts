@@ -11,7 +11,10 @@ type PythonOutput = {
 const AUDIO_POC_PATH = process.env.AUDIO_POC_PATH ?? "";
 
 function runPythonProcess(args: string[], env: NodeJS.ProcessEnv): Promise<string> {
-  const candidates = ["python", "py"];
+  const explicitBin = process.env.PYTHON_BIN?.trim();
+  const candidates = explicitBin
+    ? [explicitBin]
+    : ["python3", "python", "py"];
 
   return new Promise((resolve, reject) => {
     let index = 0;

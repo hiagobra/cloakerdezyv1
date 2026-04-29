@@ -256,8 +256,8 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="dezy-bg min-h-screen p-6 md:p-10">
-      <section className="mx-auto max-w-6xl">
+    <main className="dezy-bg min-h-screen p-4 md:p-8">
+      <section className="mx-auto max-w-7xl">
         <header className="glass-panel mb-8 flex flex-col gap-5 rounded-3xl p-6 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
             <Image
@@ -331,98 +331,180 @@ export default function DashboardPage() {
           {jobs.length === 0 ? (
             <p className="p-5 text-sm text-muted">Nenhum video enviado ainda.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full border-collapse text-sm">
-                <thead className="bg-card-soft/80">
-                  <tr>
-                    <th className="px-5 py-3 text-left font-medium text-muted">Arquivo</th>
-                    <th className="px-5 py-3 text-left font-medium text-muted">Tamanho</th>
-                    <th className="px-5 py-3 text-left font-medium text-muted">Preset</th>
-                    <th className="px-5 py-3 text-left font-medium text-muted">Status</th>
-                    <th className="px-5 py-3 text-left font-medium text-muted">Saida</th>
-                    <th className="px-5 py-3 text-left font-medium text-muted">Acao</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.map((job) => (
-                    <tr key={job.id} className="border-t border-border-soft/70">
-                      <td className="px-5 py-3">
-                        <p className="font-medium">{job.fileName}</p>
-                        <p className="text-xs text-muted">Enviado em {job.uploadedAt}</p>
-                      </td>
-                      <td className="px-5 py-3">{job.fileSizeMb} MB</td>
-                      <td className="px-5 py-3">
-                        <select
-                          value={job.preset}
-                          onChange={(event) =>
-                            updatePreset(job.id, event.target.value as CamouflagePreset)
-                          }
-                          className="rounded-lg border border-border-soft bg-card-soft px-2 py-1.5 outline-none transition focus:border-primary"
-                          disabled={job.status === "processing"}
-                        >
-                          <option value="leve">Leve</option>
-                          <option value="medio">Medio</option>
-                          <option value="forte">Forte</option>
-                        </select>
-                      </td>
-                      <td className="px-5 py-3">
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            job.status === "done"
-                              ? "bg-emerald-500/20 text-emerald-200"
-                              : job.status === "error"
-                                ? "bg-red-500/20 text-red-200"
-                              : job.status === "processing"
-                                ? "bg-amber-500/20 text-amber-200"
-                                : "bg-zinc-500/20 text-zinc-200"
-                          }`}
-                        >
-                          {job.status === "processing"
-                            ? "Camuflando..."
-                            : job.status === "done"
-                              ? "Camuflado"
-                              : job.status === "error"
-                                ? "Erro"
-                              : job.status === "queued"
-                                ? "Na fila"
-                                : "Pronto para iniciar"}
-                        </span>
-                        {job.errorMessage ? (
-                          <p className="mt-1 max-w-[220px] text-xs text-red-200">{job.errorMessage}</p>
-                        ) : null}
-                      </td>
-                      <td className="px-5 py-3 text-muted">
-                        {job.outputName && job.downloadPath ? (
-                          <a
-                            href={job.downloadPath}
-                            download={job.outputName}
-                            className="text-primary underline decoration-primary/50 underline-offset-4 hover:text-primary-strong"
-                          >
-                            Baixar {job.outputName}
-                          </a>
-                        ) : (
-                          "Aguardando processamento"
-                        )}
-                      </td>
-                      <td className="px-5 py-3">
-                        <button
-                          type="button"
-                          onClick={() => startCamouflage(job.id)}
-                          disabled={job.status === "processing"}
-                          className="rounded-lg border border-primary/80 px-3 py-2 text-xs font-semibold transition hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {job.status === "processing"
-                            ? "Processando..."
-                            : job.status === "done"
-                              ? "Reprocessar"
-                              : "Camuflar"}
-                        </button>
-                      </td>
+            <>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full border-collapse text-sm">
+                  <thead className="bg-card-soft/80">
+                    <tr>
+                      <th className="px-4 py-3 text-left font-medium text-muted">Arquivo</th>
+                      <th className="px-3 py-3 text-left font-medium text-muted whitespace-nowrap">Tamanho</th>
+                      <th className="px-3 py-3 text-left font-medium text-muted">Preset</th>
+                      <th className="px-3 py-3 text-left font-medium text-muted">Status</th>
+                      <th className="px-3 py-3 text-left font-medium text-muted">Saida</th>
+                      <th className="px-3 py-3 text-right font-medium text-muted">Acao</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {jobs.map((job) => (
+                      <tr key={job.id} className="border-t border-border-soft/70 align-top">
+                        <td className="px-4 py-3">
+                          <p className="font-medium break-words">{job.fileName}</p>
+                          <p className="text-xs text-muted">Enviado em {job.uploadedAt}</p>
+                        </td>
+                        <td className="px-3 py-3 whitespace-nowrap">{job.fileSizeMb} MB</td>
+                        <td className="px-3 py-3">
+                          <select
+                            value={job.preset}
+                            onChange={(event) =>
+                              updatePreset(job.id, event.target.value as CamouflagePreset)
+                            }
+                            className="rounded-lg border border-border-soft bg-card-soft px-2 py-1.5 outline-none transition focus:border-primary"
+                            disabled={job.status === "processing"}
+                          >
+                            <option value="leve">Leve</option>
+                            <option value="medio">Medio</option>
+                            <option value="forte">Forte</option>
+                          </select>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span
+                            className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${
+                              job.status === "done"
+                                ? "bg-emerald-500/20 text-emerald-200"
+                                : job.status === "error"
+                                  ? "bg-red-500/20 text-red-200"
+                                : job.status === "processing"
+                                  ? "bg-amber-500/20 text-amber-200"
+                                  : "bg-zinc-500/20 text-zinc-200"
+                            }`}
+                          >
+                            {job.status === "processing"
+                              ? "Camuflando..."
+                              : job.status === "done"
+                                ? "Camuflado"
+                                : job.status === "error"
+                                  ? "Erro"
+                                : job.status === "queued"
+                                  ? "Na fila"
+                                  : "Pronto para iniciar"}
+                          </span>
+                          {job.errorMessage ? (
+                            <p className="mt-1 max-w-[220px] text-xs text-red-200 break-words">{job.errorMessage}</p>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-3 text-muted">
+                          {job.outputName && job.downloadPath ? (
+                            <a
+                              href={job.downloadPath}
+                              download={job.outputName}
+                              className="text-primary underline decoration-primary/50 underline-offset-4 hover:text-primary-strong break-words"
+                            >
+                              Baixar {job.outputName}
+                            </a>
+                          ) : (
+                            "Aguardando..."
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => startCamouflage(job.id)}
+                            disabled={job.status === "processing"}
+                            className="rounded-lg border border-primary/80 px-3 py-2 text-xs font-semibold whitespace-nowrap transition hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {job.status === "processing"
+                              ? "Processando..."
+                              : job.status === "done"
+                                ? "Reprocessar"
+                                : "Camuflar"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex flex-col gap-3 p-4 md:hidden">
+                {jobs.map((job) => (
+                  <div
+                    key={job.id}
+                    className="rounded-2xl border border-border-soft/70 bg-card-soft/40 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium break-words">{job.fileName}</p>
+                        <p className="text-xs text-muted">{job.uploadedAt}</p>
+                        <p className="text-xs text-muted mt-1">{job.fileSizeMb} MB</p>
+                      </div>
+                      <span
+                        className={`inline-block shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${
+                          job.status === "done"
+                            ? "bg-emerald-500/20 text-emerald-200"
+                            : job.status === "error"
+                              ? "bg-red-500/20 text-red-200"
+                            : job.status === "processing"
+                              ? "bg-amber-500/20 text-amber-200"
+                              : "bg-zinc-500/20 text-zinc-200"
+                        }`}
+                      >
+                        {job.status === "processing"
+                          ? "Camuflando..."
+                          : job.status === "done"
+                            ? "Camuflado"
+                            : job.status === "error"
+                              ? "Erro"
+                            : job.status === "queued"
+                              ? "Na fila"
+                              : "Pronto"}
+                      </span>
+                    </div>
+
+                    {job.errorMessage ? (
+                      <p className="mt-2 text-xs text-red-200 break-words">{job.errorMessage}</p>
+                    ) : null}
+
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <select
+                        value={job.preset}
+                        onChange={(event) =>
+                          updatePreset(job.id, event.target.value as CamouflagePreset)
+                        }
+                        className="rounded-lg border border-border-soft bg-card-soft px-2 py-1.5 text-sm outline-none transition focus:border-primary"
+                        disabled={job.status === "processing"}
+                      >
+                        <option value="leve">Leve</option>
+                        <option value="medio">Medio</option>
+                        <option value="forte">Forte</option>
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => startCamouflage(job.id)}
+                        disabled={job.status === "processing"}
+                        className="ml-auto rounded-lg border border-primary/80 px-3 py-2 text-xs font-semibold transition hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {job.status === "processing"
+                          ? "Processando..."
+                          : job.status === "done"
+                            ? "Reprocessar"
+                            : "Camuflar"}
+                      </button>
+                    </div>
+
+                    {job.outputName && job.downloadPath ? (
+                      <a
+                        href={job.downloadPath}
+                        download={job.outputName}
+                        className="mt-3 inline-block text-sm text-primary underline decoration-primary/50 underline-offset-4 hover:text-primary-strong break-words"
+                      >
+                        Baixar {job.outputName}
+                      </a>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </section>
       </section>
