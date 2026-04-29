@@ -7,6 +7,37 @@ import { useRouter } from "next/navigation";
 type CamouflagePreset = "leve" | "medio" | "forte";
 type VideoStatus = "local" | "queued" | "processing" | "done" | "error";
 
+type CamouflageTarget =
+  | "financas_pt"
+  | "tecnologia_pt"
+  | "culinaria_pt"
+  | "saude_pt"
+  | "nutricao_pt"
+  | "motivacional_pt"
+  | "marketing_pt"
+  | "educacao_infantil_pt"
+  | "finance_en"
+  | "fitness_en";
+
+const TARGET_OPTIONS: ReadonlyArray<{ value: CamouflageTarget; label: string }> = [
+  { value: "financas_pt", label: "Finanças (PT)" },
+  { value: "tecnologia_pt", label: "Tecnologia (PT)" },
+  { value: "culinaria_pt", label: "Culinária (PT)" },
+  { value: "saude_pt", label: "Saúde (PT)" },
+  { value: "nutricao_pt", label: "Nutrição (PT)" },
+  { value: "motivacional_pt", label: "Motivacional (PT)" },
+  { value: "marketing_pt", label: "Marketing Digital (PT)" },
+  { value: "educacao_infantil_pt", label: "Educação Infantil (PT)" },
+  { value: "finance_en", label: "Finance (EN)" },
+  { value: "fitness_en", label: "Fitness (EN)" },
+];
+
+const VALID_TARGETS: ReadonlyArray<CamouflageTarget> = TARGET_OPTIONS.map((o) => o.value);
+
+function isCamouflageTarget(value: unknown): value is CamouflageTarget {
+  return typeof value === "string" && (VALID_TARGETS as ReadonlyArray<string>).includes(value);
+}
+
 type VideoJob = {
   id: string;
   remoteJobId?: string;
@@ -15,9 +46,11 @@ type VideoJob = {
   fileSizeMb: string;
   uploadedAt: string;
   preset: CamouflagePreset;
+  targetPreset: CamouflageTarget;
   status: VideoStatus;
   outputName?: string;
   downloadPath?: string;
+  layersApplied?: string[];
   errorMessage?: string;
 };
 
@@ -50,10 +83,12 @@ export default function DashboardPage() {
         id: string;
         fileName: string;
         preset: CamouflagePreset;
+        targetPreset?: string;
         status: "queued" | "processing" | "done" | "failed";
         createdAt: string;
         outputName?: string;
         downloadUrl?: string;
+        layersApplied?: string[];
         error?: string;
       }>;
 
@@ -65,10 +100,12 @@ export default function DashboardPage() {
           fileSizeMb: "-",
           uploadedAt: new Date(item.createdAt).toLocaleString("pt-BR"),
           preset: item.preset,
+          targetPreset: isCamouflageTarget(item.targetPreset) ? item.targetPreset : "financas_pt",
           status:
             item.status === "failed" ? "error" : item.status === "done" ? "done" : item.status,
           outputName: item.outputName,
           downloadPath: item.downloadUrl,
+          layersApplied: item.layersApplied,
           errorMessage: item.error,
         })),
       );
@@ -125,6 +162,7 @@ export default function DashboardPage() {
           status: "queued" | "processing" | "done" | "failed";
           outputName?: string;
           downloadUrl?: string;
+          layersApplied?: string[];
           error?: string;
         };
 
@@ -141,6 +179,7 @@ export default function DashboardPage() {
                         : data.status,
                   outputName: data.outputName ?? current.outputName,
                   downloadPath: data.downloadUrl ?? current.downloadPath,
+                  layersApplied: data.layersApplied ?? current.layersApplied,
                   errorMessage: data.error ?? undefined,
                 }
               : current,
@@ -174,6 +213,7 @@ export default function DashboardPage() {
         fileSizeMb: formatSizeInMb(file.size),
         uploadedAt: now,
         preset: "medio",
+        targetPreset: "financas_pt",
         status: "local",
       });
     }
@@ -189,6 +229,10 @@ export default function DashboardPage() {
 
   function updatePreset(jobId: string, preset: CamouflagePreset) {
     setJobs((prev) => prev.map((job) => (job.id === jobId ? { ...job, preset } : job)));
+  }
+
+  function updateTarget(jobId: string, targetPreset: CamouflageTarget) {
+    setJobs((prev) => prev.map((job) => (job.id === jobId ? { ...job, targetPreset } : job)));
   }
 
   async function startCamouflage(jobId: string) {
@@ -219,6 +263,7 @@ export default function DashboardPage() {
       const body = new FormData();
       body.append("file", currentJob.file);
       body.append("preset", currentJob.preset);
+      body.append("targetPreset", currentJob.targetPreset);
 
       const response = await fetch("/api/camouflage", {
         method: "POST",
@@ -363,7 +408,8 @@ export default function DashboardPage() {
                     <tr>
                       <th className="px-4 py-3 text-left font-medium text-muted">Arquivo</th>
                       <th className="px-3 py-3 text-left font-medium text-muted whitespace-nowrap">Tamanho</th>
-                      <th className="px-3 py-3 text-left font-medium text-muted">Preset</th>
+                      <th className="px-3 py-3 text-left font-medium text-muted">Intensidade</th>
+                      <th className="px-3 py-3 text-left font-medium text-muted">Tópico-alvo</th>
                       <th className="px-3 py-3 text-left font-medium text-muted">Status</th>
                       <th className="px-3 py-3 text-left font-medium text-muted">Saida</th>
                       <th className="px-3 py-3 text-right font-medium text-muted">Acao</th>
@@ -389,6 +435,22 @@ export default function DashboardPage() {
                             <option value="leve">Leve</option>
                             <option value="medio">Medio</option>
                             <option value="forte">Forte</option>
+                          </select>
+                        </td>
+                        <td className="px-3 py-3">
+                          <select
+                            value={job.targetPreset}
+                            onChange={(event) =>
+                              updateTarget(job.id, event.target.value as CamouflageTarget)
+                            }
+                            className="rounded-lg border border-border-soft bg-card-soft px-2 py-1.5 outline-none transition focus:border-primary"
+                            disabled={job.status === "processing"}
+                          >
+                            {TARGET_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
                           </select>
                         </td>
                         <td className="px-3 py-3">
@@ -497,10 +559,27 @@ export default function DashboardPage() {
                         }
                         className="rounded-lg border border-border-soft bg-card-soft px-2 py-1.5 text-sm outline-none transition focus:border-primary"
                         disabled={job.status === "processing"}
+                        aria-label="Intensidade"
                       >
                         <option value="leve">Leve</option>
                         <option value="medio">Medio</option>
                         <option value="forte">Forte</option>
+                      </select>
+
+                      <select
+                        value={job.targetPreset}
+                        onChange={(event) =>
+                          updateTarget(job.id, event.target.value as CamouflageTarget)
+                        }
+                        className="rounded-lg border border-border-soft bg-card-soft px-2 py-1.5 text-sm outline-none transition focus:border-primary"
+                        disabled={job.status === "processing"}
+                        aria-label="Tópico-alvo"
+                      >
+                        {TARGET_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
                       </select>
 
                       <button

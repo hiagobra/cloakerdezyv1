@@ -75,11 +75,13 @@ export async function GET(request: Request, context: RouteContext) {
     id: job.id,
     fileName: job.fileName,
     preset: job.preset,
+    targetPreset: job.targetPreset,
     status: job.status,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
     outputName: job.outputPath ? job.outputPath.split(/[\\/]/).pop() : undefined,
     downloadUrl,
+    layersApplied: job.layersApplied,
     error: job.error,
   });
 }

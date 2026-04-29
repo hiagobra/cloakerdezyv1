@@ -6,16 +6,45 @@ import { randomUUID } from "node:crypto";
 export type CamouflagePreset = "leve" | "medio" | "forte";
 export type CamouflageStatus = "queued" | "processing" | "done" | "failed";
 
+export type CamouflageTarget =
+  | "financas_pt"
+  | "tecnologia_pt"
+  | "culinaria_pt"
+  | "saude_pt"
+  | "nutricao_pt"
+  | "motivacional_pt"
+  | "marketing_pt"
+  | "educacao_infantil_pt"
+  | "finance_en"
+  | "fitness_en";
+
+export const CAMOUFLAGE_TARGETS: CamouflageTarget[] = [
+  "financas_pt",
+  "tecnologia_pt",
+  "culinaria_pt",
+  "saude_pt",
+  "nutricao_pt",
+  "motivacional_pt",
+  "marketing_pt",
+  "educacao_infantil_pt",
+  "finance_en",
+  "fitness_en",
+];
+
+export const DEFAULT_TARGET: CamouflageTarget = "financas_pt";
+
 export type CamouflageJob = {
   id: string;
   userId: string;
   fileName: string;
   preset: CamouflagePreset;
+  targetPreset: CamouflageTarget;
   createdAt: string;
   updatedAt: string;
   status: CamouflageStatus;
   inputPath: string;
   outputPath?: string;
+  layersApplied?: string[];
   error?: string;
 };
 
@@ -24,6 +53,18 @@ const defaultStorage = path.join(os.tmpdir(), "cloakerdezy-storage");
 
 export function getStorageRoot(): string {
   return process.env.CAMOUFLAGE_STORAGE_DIR ?? defaultStorage;
+}
+
+export function isValidTarget(value: unknown): value is CamouflageTarget {
+  return typeof value === "string" && (CAMOUFLAGE_TARGETS as string[]).includes(value);
+}
+
+export function mapPresetToProfile(
+  preset: CamouflagePreset,
+): "minimal" | "standard" | "aggressive" {
+  if (preset === "leve") return "minimal";
+  if (preset === "forte") return "aggressive";
+  return "standard";
 }
 
 export function mapPreset(preset: CamouflagePreset): "light" | "balanced" | "aggressive" {
@@ -52,6 +93,7 @@ export async function createJob(
   userId: string,
   fileName: string,
   preset: CamouflagePreset,
+  targetPreset: CamouflageTarget,
   bytes: Buffer,
 ): Promise<CamouflageJob> {
   await ensureStorageDirs();
@@ -69,6 +111,7 @@ export async function createJob(
     userId,
     fileName,
     preset,
+    targetPreset,
     createdAt: now,
     updatedAt: now,
     status: "queued",
@@ -82,7 +125,12 @@ export async function createJob(
 export async function getJob(id: string): Promise<CamouflageJob | null> {
   try {
     const raw = await fs.readFile(getJobMetaPath(id), "utf8");
-    return JSON.parse(raw) as CamouflageJob;
+    const parsed = JSON.parse(raw) as Partial<CamouflageJob> & { targetPreset?: string };
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!isValidTarget(parsed.targetPreset)) {
+      parsed.targetPreset = DEFAULT_TARGET;
+    }
+    return parsed as CamouflageJob;
   } catch {
     return null;
   }

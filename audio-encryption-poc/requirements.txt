@@ -5,3 +5,12 @@ jiwer>=3.0
 pandas>=2.2
 tqdm>=4.66
 gradio>=4.44
+Pillow>=10.0
+mutagen>=1.47
+pysrt>=1.1
+pyttsx3>=2.90
+
+# Optional heavy ML deps (install on demand for full cloak functionality):
+# pip install openai-whisper torch transformers
+# pip install tensorflow tensorflow-hub
+# pip install google-generativeai

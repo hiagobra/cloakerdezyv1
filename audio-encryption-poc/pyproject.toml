@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "audio-encryption-poc"
-version = "0.1.0"
-description = "PoC pipeline for phase-stereo audio protection against ASR."
+version = "0.2.0"
+description = "Multimodal video topic cloaker (audio + visual + track + verify) plus phase-stereo ASR protection PoC."
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26",
@@ -15,6 +15,26 @@ dependencies = [
   "pandas>=2.2",
   "tqdm>=4.66",
   "gradio>=4.44",
+  "Pillow>=10.0",
+  "mutagen>=1.47",
+  "pysrt>=1.1",
+  "pyttsx3>=2.90",
+]
+
+[project.optional-dependencies]
+whisper = ["openai-whisper>=20231117", "torch>=2.1"]
+ensemble = ["openai-whisper>=20231117", "torch>=2.1", "transformers>=4.40"]
+yamnet = ["tensorflow>=2.15", "tensorflow-hub>=0.16"]
+gemini = ["google-generativeai>=0.7"]
+art = ["adversarial-robustness-toolbox>=1.17", "torch>=2.1"]
+all = [
+  "openai-whisper>=20231117",
+  "torch>=2.1",
+  "transformers>=4.40",
+  "tensorflow>=2.15",
+  "tensorflow-hub>=0.16",
+  "google-generativeai>=0.7",
+  "adversarial-robustness-toolbox>=1.17",
 ]
 
 [tool.setuptools]

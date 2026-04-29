@@ -1,11 +1,17 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { type CamouflageJob, mapPreset, saveJob } from "@/lib/camouflage/job-store";
+import {
+  type CamouflageJob,
+  DEFAULT_TARGET,
+  mapPresetToProfile,
+  saveJob,
+} from "@/lib/camouflage/job-store";
 
 type PythonOutput = {
   output_path?: string;
   outputPath?: string;
+  layers_applied?: string[];
 };
 
 function getAudioPocPath(): string {
@@ -94,11 +100,17 @@ export async function processJob(job: CamouflageJob): Promise<CamouflageJob> {
     const outputDir = path.join(path.dirname(job.inputPath), "output");
     await fs.mkdir(outputDir, { recursive: true });
 
+    const profile = mapPresetToProfile(job.preset);
+    const targetPreset = job.targetPreset ?? DEFAULT_TARGET;
+
     const pythonCode = [
-      "import json, sys",
-      "from audio_poc.video_pipeline import process_uploaded_media",
-      "result = process_uploaded_media(sys.argv[1], sys.argv[2], sys.argv[3])",
-      "print(json.dumps({'output_path': str(result.output_path)}, ensure_ascii=True))",
+      "import json, sys, pathlib",
+      "from audio_poc.cloak.composer import cloak_video",
+      "input_path, profile, target_preset, output_dir = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]",
+      "stem = pathlib.Path(input_path).stem",
+      "out = pathlib.Path(output_dir) / (stem + '.cloaked.' + profile + '.' + target_preset + '.mp4')",
+      "result = cloak_video(input_path=input_path, output_path=str(out), target_preset=target_preset, profile=profile)",
+      "print(json.dumps({'output_path': str(result.output_path), 'layers_applied': list(result.layers_applied)}, ensure_ascii=True))",
     ].join("; ");
 
     const pythonPath = path.join(getAudioPocPath(), "src");
@@ -110,7 +122,7 @@ export async function processJob(job: CamouflageJob): Promise<CamouflageJob> {
     };
 
     const stdout = await runPythonProcess(
-      ["-c", pythonCode, job.inputPath, mapPreset(job.preset), outputDir],
+      ["-c", pythonCode, job.inputPath, profile, targetPreset, outputDir],
       env,
     );
 
@@ -128,6 +140,7 @@ export async function processJob(job: CamouflageJob): Promise<CamouflageJob> {
 
     job.status = "done";
     job.outputPath = outputPath;
+    job.layersApplied = parsed.layers_applied ?? [];
     job.error = undefined;
     await saveJob(job);
     return job;

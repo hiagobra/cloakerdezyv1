@@ -3,8 +3,11 @@ import { createDownloadToken } from "@/lib/security/download-token";
 import {
   createJob,
   deleteJobsByUser,
+  DEFAULT_TARGET,
+  isValidTarget,
   listJobsByUser,
   type CamouflagePreset,
+  type CamouflageTarget,
 } from "@/lib/camouflage/job-store";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 import { isTrustedOrigin } from "@/lib/security/request-guard";
@@ -42,6 +45,7 @@ export async function GET(request: Request) {
       id: job.id,
       fileName: job.fileName,
       preset: job.preset,
+      targetPreset: job.targetPreset,
       status: job.status,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
@@ -50,6 +54,7 @@ export async function GET(request: Request) {
         job.status === "done"
           ? `/api/camouflage/${job.id}/download?token=${encodeURIComponent(createDownloadToken(job.id, 60 * 10))}`
           : undefined,
+      layersApplied: job.layersApplied,
       error: job.error,
     })),
   );
@@ -80,6 +85,10 @@ export async function POST(request: Request) {
   const formData = await request.formData();
   const file = formData.get("file");
   const preset = String(formData.get("preset") ?? "medio") as CamouflagePreset;
+  const rawTarget = formData.get("targetPreset");
+  const targetPreset: CamouflageTarget = isValidTarget(rawTarget)
+    ? (rawTarget as CamouflageTarget)
+    : DEFAULT_TARGET;
 
   if (!(file instanceof File)) {
     return Response.json({ error: "Arquivo nao enviado." }, { status: 400 });
@@ -91,8 +100,8 @@ export async function POST(request: Request) {
 
   try {
     const bytes = await file.arrayBuffer();
-    const job = await createJob(userId, file.name, preset, Buffer.from(bytes));
-    return Response.json({ jobId: job.id, status: job.status });
+    const job = await createJob(userId, file.name, preset, targetPreset, Buffer.from(bytes));
+    return Response.json({ jobId: job.id, status: job.status, targetPreset: job.targetPreset });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Falha ao camuflar arquivo.";
     return Response.json({ error: message }, { status: 500 });
