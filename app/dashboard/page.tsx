@@ -25,6 +25,15 @@ function formatSizeInMb(size: number): string {
   return (size / (1024 * 1024)).toFixed(2);
 }
 
+function safeRandomId(): string {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {}
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [jobs, setJobs] = useState<VideoJob[]>([]);
@@ -50,7 +59,7 @@ export default function DashboardPage() {
 
       setJobs(
         data.map((item) => ({
-          id: crypto.randomUUID(),
+          id: safeRandomId(),
           remoteJobId: item.id,
           fileName: item.fileName,
           fileSizeMb: "-",
@@ -139,7 +148,7 @@ export default function DashboardPage() {
       }
 
       newJobs.push({
-        id: crypto.randomUUID(),
+        id: safeRandomId(),
         file,
         fileName: file.name,
         fileSizeMb: formatSizeInMb(file.size),
