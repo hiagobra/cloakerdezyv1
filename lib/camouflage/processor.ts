@@ -8,7 +8,9 @@ type PythonOutput = {
   outputPath?: string;
 };
 
-const AUDIO_POC_PATH = process.env.AUDIO_POC_PATH ?? "";
+function getAudioPocPath(): string {
+  return (process.env.AUDIO_POC_PATH ?? "").trim();
+}
 
 function runPythonProcess(args: string[], env: NodeJS.ProcessEnv): Promise<string> {
   const explicitBin = process.env.PYTHON_BIN?.trim();
@@ -46,8 +48,8 @@ function runPythonProcess(args: string[], env: NodeJS.ProcessEnv): Promise<strin
         stderr += chunk.toString();
       });
 
-      child.on("error", () => {
-        lastError = `Nao foi possivel executar ${command}.`;
+      child.on("error", (err) => {
+        lastError = `Nao foi possivel executar ${command}: ${err.message}`;
         next();
       });
 
@@ -67,19 +69,20 @@ function runPythonProcess(args: string[], env: NodeJS.ProcessEnv): Promise<strin
 }
 
 async function ensurePipelineAvailable(): Promise<void> {
-  if (!AUDIO_POC_PATH) {
+  const audioPocPath = getAudioPocPath();
+  if (!audioPocPath) {
     throw new Error(
-      "Pipeline de camuflagem nao configurada neste ambiente. Configure AUDIO_POC_PATH localmente para processar videos.",
+      "Pipeline de camuflagem nao configurada. Configure AUDIO_POC_PATH no .env.local.",
     );
   }
   try {
-    const stat = await fs.stat(AUDIO_POC_PATH);
+    const stat = await fs.stat(audioPocPath);
     if (!stat.isDirectory()) {
       throw new Error("AUDIO_POC_PATH nao aponta para um diretorio valido.");
     }
   } catch {
     throw new Error(
-      "Pipeline de camuflagem indisponivel. Verifique AUDIO_POC_PATH e a instalacao do Python no ambiente local.",
+      `Pipeline de camuflagem indisponivel em ${audioPocPath}. Verifique AUDIO_POC_PATH e a instalacao do Python.`,
     );
   }
 }
@@ -98,7 +101,7 @@ export async function processJob(job: CamouflageJob): Promise<CamouflageJob> {
       "print(json.dumps({'output_path': str(result.output_path)}, ensure_ascii=True))",
     ].join("; ");
 
-    const pythonPath = path.join(AUDIO_POC_PATH, "src");
+    const pythonPath = path.join(getAudioPocPath(), "src");
     const env = {
       ...process.env,
       PYTHONPATH: process.env.PYTHONPATH
