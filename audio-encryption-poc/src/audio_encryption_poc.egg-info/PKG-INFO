@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: audio-encryption-poc
+Version: 0.1.0
+Summary: PoC pipeline for phase-stereo audio protection against ASR.
+Requires-Python: >=3.10
+Requires-Dist: numpy>=1.26
+Requires-Dist: scipy>=1.12
+Requires-Dist: soundfile>=0.12
+Requires-Dist: jiwer>=3.0
+Requires-Dist: pandas>=2.2
+Requires-Dist: tqdm>=4.66
+Requires-Dist: gradio>=4.44

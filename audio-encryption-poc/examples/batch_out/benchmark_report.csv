@@ -1,0 +1,7 @@
+file,preset,output_file,snr_db
+examples\batch_in\input1.wav,light,examples\batch_out\input1.light.wav,6.560102871089222
+examples\batch_in\input1.wav,balanced,examples\batch_out\input1.balanced.wav,7.781047932491118
+examples\batch_in\input1.wav,aggressive,examples\batch_out\input1.aggressive.wav,9.232497973691254
+examples\batch_in\input2.wav,light,examples\batch_out\input2.light.wav,17.87605252515878
+examples\batch_in\input2.wav,balanced,examples\batch_out\input2.balanced.wav,17.966290672264844
+examples\batch_in\input2.wav,aggressive,examples\batch_out\input2.aggressive.wav,12.275514059968543
