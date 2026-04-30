@@ -84,7 +84,25 @@ def _cmd_cloak(args: argparse.Namespace) -> None:
         underlay_host_dbfs=args.underlay_host_dbfs,
         underlay_target_dbfs=args.underlay_target_dbfs,
         underlay_duck_db=args.underlay_duck_db,
+        audio_swap_mode=args.audio_swap_mode,
+        swap_host_dbfs=args.swap_host_dbfs,
+        swap_target_dbfs=args.swap_target_dbfs,
+        swap_intro_seconds=args.swap_intro_seconds,
+        swap_outro_seconds=args.swap_outro_seconds,
+        injection_bed_dbfs=args.injection_bed_dbfs,
+        mel_epsilon=args.mel_epsilon,
+        more_length_factor=args.more_length_factor,
+        more_length_alpha=args.more_length_alpha,
         prompt_inject_strength=args.prompt_inject_strength,
+        formant_depth_db=args.formant_depth_db,
+        formant_q=args.formant_q,
+        brand_overlay_position=args.brand_overlay_position,
+        brand_overlay_opacity=args.brand_overlay_opacity,
+        brand_overlay_width_ratio=args.brand_overlay_width_ratio,
+        surrogate_patch_cache_dir=args.surrogate_cache_dir,
+        surrogate_force_recompute=args.surrogate_force_recompute,
+        visual_keyframes_only=args.keyframes_only,
+        visual_keyframe_window_seconds=args.keyframe_window_seconds,
         keep_workdir=args.keep_workdir,
     )
     overrides = _parse_layer_overrides(args.layers)
@@ -183,6 +201,61 @@ def _cmd_cloak_audio_art(args: argparse.Namespace) -> None:
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
+def _cmd_cloak_audio_more(args: argparse.Namespace) -> None:
+    """Run MORE-style length-explosion PGD against Whisper on a single audio file.
+
+    This is a behavioral approximation of MORE (ICLR 2026), not a 1:1 reproduction.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    from .cloak.audio.whisper_attack import cloak_to_target_more
+    from .cloak.targets import get_target
+
+    audio, sr = sf.read(args.input, always_2d=True, dtype="float32")
+    mono = audio.mean(axis=1).astype(np.float32) if audio.shape[1] > 1 else audio[:, 0]
+
+    if args.target_text:
+        target_text = args.target_text
+        language = args.language
+    elif args.target_preset:
+        t = get_target(args.target_preset)
+        target_text = t.transcript
+        language = t.language
+    else:
+        raise SystemExit("Forneça --target-text ou --target-preset.")
+
+    res = cloak_to_target_more(
+        audio_np=mono,
+        sample_rate=sr,
+        target_text=target_text,
+        language=language,
+        model_name=args.whisper_model,
+        epsilon=args.epsilon,
+        iters=args.iters,
+        length_factor=args.length_factor,
+        length_alpha=args.length_alpha,
+        progress_callback=lambda s, n, l: print(f"  step {s}/{n} loss={l:.3f}") if s % 100 == 0 else None,
+    )
+
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    stereo = np.stack([res.audio_mono, res.audio_mono], axis=1)
+    sf.write(str(out_path), stereo, res.sample_rate)
+
+    summary = {
+        "engine": "whisper_more",
+        "output": str(out_path.resolve()),
+        "sample_rate": res.sample_rate,
+        "iterations": res.iterations,
+        "epsilon": res.epsilon,
+        "target_text": res.target_text,
+        "decoded_text": res.decoded_text,
+        "final_loss": res.final_loss,
+    }
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+
 def _cmd_list_targets(_args: argparse.Namespace) -> None:
     from .cloak.targets import TOPIC_TARGETS
     rows = []
@@ -190,6 +263,59 @@ def _cmd_list_targets(_args: argparse.Namespace) -> None:
         t = TOPIC_TARGETS[k]
         rows.append({"key": k, "language": t.language, "description": t.description})
     print(json.dumps(rows, indent=2, ensure_ascii=False))
+
+
+def _cmd_precompute_patches(args: argparse.Namespace) -> None:
+    """Pre-compute the universal surrogate patch PNG for one or all presets.
+
+    The patch is a deterministic function of (preset.vlm_caption, model,
+    seed) so we cache it under ``audio-encryption-poc/assets/patches/`` and
+    reuse it for every job. Run this once on a machine with torch/transformers
+    installed; afterwards the regular cloak pipeline becomes ~50x faster on
+    the visual_surrogate layer.
+    """
+    from .cloak.targets import TOPIC_TARGETS
+    from .cloak.visual.surrogate_patch import (
+        default_patch_cache_dir,
+        precompute_patch_for_target,
+    )
+
+    cache_dir = (
+        Path(args.cache_dir).resolve() if args.cache_dir else default_patch_cache_dir()
+    )
+    if args.target_preset == "all":
+        keys = list_targets()
+    else:
+        if args.target_preset not in TOPIC_TARGETS:
+            raise SystemExit(
+                f"target preset desconhecido: {args.target_preset!r} (use 'all' ou um de {list_targets()})"
+            )
+        keys = [args.target_preset]
+
+    rows = []
+    for key in keys:
+        target = TOPIC_TARGETS[key]
+        cached = cache_dir / f"{key}.png"
+        was_cached = cached.exists() and not args.force
+        out = precompute_patch_for_target(
+            target,
+            cache_dir=cache_dir,
+            patch_size=args.patch_size,
+            iters=args.iters,
+            force_recompute=args.force,
+        )
+        rows.append(
+            {
+                "key": key,
+                "path": str(out),
+                "from_cache": was_cached,
+            }
+        )
+        status = "cache" if was_cached else "computed"
+        print(f"[{status}] {key} -> {out}")
+
+    print()
+    print(json.dumps({"cache_dir": str(cache_dir), "patches": rows}, indent=2, ensure_ascii=False))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -249,10 +375,119 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cloak.add_argument("--underlay-target-dbfs", type=float, default=-22.0)
     p_cloak.add_argument("--underlay-duck-db", type=float, default=-5.0)
     p_cloak.add_argument(
+        "--audio-swap-mode",
+        choices=["auto", "underlay", "intro_outro", "full"],
+        default="auto",
+        help=(
+            "How TTS-target interacts with host audio. "
+            "auto = per-profile default (standard=underlay, aggressive/paranoid=full). "
+            "full = TTS dominates, host abafado. "
+            "intro_outro = swap nos primeiros/ultimos segundos, underlay no meio."
+        ),
+    )
+    p_cloak.add_argument(
+        "--swap-host-dbfs",
+        type=float,
+        default=-32.0,
+        help="Host level (dBFS) during a full/intro_outro swap. Lower = more silenced.",
+    )
+    p_cloak.add_argument(
+        "--swap-target-dbfs",
+        type=float,
+        default=-8.0,
+        help="TTS-target level (dBFS) during a full/intro_outro swap.",
+    )
+    p_cloak.add_argument(
+        "--swap-intro-seconds",
+        type=float,
+        default=5.0,
+        help="Length of the intro window when --audio-swap-mode=intro_outro.",
+    )
+    p_cloak.add_argument(
+        "--swap-outro-seconds",
+        type=float,
+        default=3.0,
+        help="Length of the outro window when --audio-swap-mode=intro_outro.",
+    )
+    p_cloak.add_argument(
+        "--injection-bed-dbfs",
+        type=float,
+        default=-34.0,
+        help="Level of the keyword injection bed under the host audio.",
+    )
+    p_cloak.add_argument(
+        "--mel-epsilon",
+        type=float,
+        default=None,
+        help="Clipped Mel Attack budget in log-mel space (e.g. 0.5). None = disabled.",
+    )
+    p_cloak.add_argument(
+        "--more-length-factor",
+        type=float,
+        default=5.0,
+        help="MORE-style: how many times to repeat target text in the attack target.",
+    )
+    p_cloak.add_argument(
+        "--more-length-alpha",
+        type=float,
+        default=0.05,
+        help="MORE-style: weight of the diffuse-features penalty.",
+    )
+    p_cloak.add_argument(
         "--prompt-inject-strength",
         choices=["auto", "none", "soft", "hard"],
         default="auto",
         help="Prompt-injection visual layer strength (auto resolves per profile).",
+    )
+    p_cloak.add_argument(
+        "--formant-depth-db",
+        type=float,
+        default=-14.0,
+        help="dB attenuation applied to the speaker formant bands (-14 = strong, 0 = off).",
+    )
+    p_cloak.add_argument(
+        "--formant-q",
+        type=float,
+        default=12.0,
+        help="Q factor of each notch filter used by formant_suppress.",
+    )
+    p_cloak.add_argument(
+        "--brand-overlay-position",
+        choices=["corner_br", "corner_bl", "corner_tr", "corner_tl"],
+        default="corner_br",
+    )
+    p_cloak.add_argument(
+        "--brand-overlay-opacity",
+        type=float,
+        default=0.85,
+        help="Opacity (0-1) of the brand-logo badge overlay.",
+    )
+    p_cloak.add_argument(
+        "--brand-overlay-width-ratio",
+        type=float,
+        default=0.14,
+        help="Brand badge width as fraction of video width (0.14 = 14%%).",
+    )
+    p_cloak.add_argument(
+        "--surrogate-cache-dir",
+        default=None,
+        help="Directory used to cache pre-computed surrogate patches per preset.",
+    )
+    p_cloak.add_argument(
+        "--surrogate-force-recompute",
+        action="store_true",
+        help="Recompute the surrogate patch even if a cached PNG already exists.",
+    )
+    p_cloak.add_argument(
+        "--keyframes-only",
+        action="store_true",
+        help="Apply brand overlay and surrogate patch only on a small window around each I-frame.",
+    )
+    p_cloak.add_argument(
+        "--keyframe-window-seconds",
+        type=float,
+        default=0.12,
+        help="Width of the keyframe window when --keyframes-only is on.",
     )
     p_cloak.add_argument("--workdir", default=None, help="Persist intermediate files for debug.")
     p_cloak.add_argument("--keep-workdir", action="store_true")
@@ -274,6 +509,34 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_list = sub.add_parser("list-targets", help="List available topic-target presets.")
     p_list.set_defaults(func=_cmd_list_targets)
+
+    p_pre = sub.add_parser(
+        "precompute-patches",
+        help=(
+            "Pre-compute the universal CLIP-aligned surrogate patch PNG per "
+            "target preset and cache it under audio-encryption-poc/assets/patches/. "
+            "Run once on a machine with torch+transformers; afterwards every "
+            "cloak job reuses the cached patch (orders of magnitude faster)."
+        ),
+    )
+    p_pre.add_argument(
+        "--target-preset",
+        default="all",
+        help="Either 'all' or a single preset key (see list-targets).",
+    )
+    p_pre.add_argument(
+        "--cache-dir",
+        default=None,
+        help="Override the default audio-encryption-poc/assets/patches/ cache dir.",
+    )
+    p_pre.add_argument("--patch-size", type=int, default=96)
+    p_pre.add_argument("--iters", type=int, default=1500)
+    p_pre.add_argument(
+        "--force",
+        action="store_true",
+        help="Recompute even if a cached PNG already exists.",
+    )
+    p_pre.set_defaults(func=_cmd_precompute_patches)
 
     p_art = sub.add_parser(
         "cloak-audio-art",
@@ -297,6 +560,34 @@ def _build_parser() -> argparse.ArgumentParser:
     p_art.add_argument("--epsilon", type=float, default=0.005)
     p_art.add_argument("--device", default="cpu", choices=["cpu", "gpu"])
     p_art.set_defaults(func=_cmd_cloak_audio_art)
+
+    p_more = sub.add_parser(
+        "cloak-audio-more",
+        help=(
+            "MORE-style length-explosion PGD on Whisper (white-box). "
+            "Behavioral approximation of MORE (ICLR 2026)."
+        ),
+    )
+    p_more.add_argument("--input", required=True)
+    p_more.add_argument("--output", required=True)
+    p_more.add_argument(
+        "--target-preset",
+        default=None,
+        choices=list_targets(),
+        help="Use the transcript+language of this target preset.",
+    )
+    p_more.add_argument(
+        "--target-text",
+        default=None,
+        help="Direct target text (overrides --target-preset).",
+    )
+    p_more.add_argument("--language", default="pt")
+    p_more.add_argument("--whisper-model", default="base")
+    p_more.add_argument("--epsilon", type=float, default=0.005)
+    p_more.add_argument("--iters", type=int, default=1500)
+    p_more.add_argument("--length-factor", type=float, default=5.0)
+    p_more.add_argument("--length-alpha", type=float, default=0.05)
+    p_more.set_defaults(func=_cmd_cloak_audio_more)
 
     return parser
 

@@ -396,6 +396,11 @@ export default function DashboardPage() {
         <section className="glass-panel overflow-hidden rounded-2xl">
           <div className="border-b border-border-soft/80 px-5 py-4">
             <h2 className="font-semibold">Fila de camuflagem</h2>
+            <p className="mt-2 text-xs text-muted">
+              <span className="font-semibold text-foreground">Leve</span>: overlay visual + SRT do alvo, audio original mantido.{" "}
+              <span className="font-semibold text-foreground">Medio</span>: TTS do topico-alvo misturado em volume baixo no audio original.{" "}
+              <span className="font-semibold text-foreground">Forte</span>: TTS do alvo passa a dominar a faixa de audio (voz original abafada a -32 dBFS) e ataques adversariais reforcados. Humanos ouvem a narracao do tema-alvo no lugar do audio original.
+            </p>
           </div>
 
           {jobs.length === 0 ? (

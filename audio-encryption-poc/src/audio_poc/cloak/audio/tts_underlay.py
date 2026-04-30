@@ -144,6 +144,112 @@ def mix_underlay_into_audio(
     return mixed.astype(np.float32)
 
 
+def mix_swap_full(
+    host_stereo: np.ndarray,
+    sample_rate: int,
+    underlay_mono: np.ndarray,
+    underlay_sr: int,
+    host_target_dbfs: float = -32.0,
+    target_dbfs: float = -8.0,
+) -> np.ndarray:
+    """Swap mode: TTS-target becomes the dominant audio, host is reduced to
+    near-silence (kept as faint room tone so the track is not literally muted).
+
+    Designed to flip ASR transcripts produced by Gemini / Whisper / wav2vec2 to
+    the target topic when the original audio cannot be allowed to dominate.
+    """
+    if underlay_sr != sample_rate:
+        n_new = int(underlay_mono.shape[0] * sample_rate / underlay_sr)
+        underlay_mono = signal.resample(underlay_mono, n_new).astype(np.float32)
+
+    n = host_stereo.shape[0]
+    underlay_mono = _loop_to_length(underlay_mono, n)
+
+    host = host_stereo.astype(np.float32).copy()
+    host_mono_for_norm = host.mean(axis=1)
+    host_rms = float(np.sqrt(np.mean(host_mono_for_norm**2) + 1e-10))
+    if host_rms > 1e-8:
+        host *= (10 ** (host_target_dbfs / 20.0)) / host_rms
+
+    underlay = _normalize_to_dbfs(underlay_mono, target_dbfs)
+    underlay_stereo = np.stack([underlay, underlay], axis=1) * 0.95
+    underlay_stereo[:, 1] *= 0.97
+
+    mixed = host + underlay_stereo
+    peak = float(np.max(np.abs(mixed)) + 1e-8)
+    if peak > 0.99:
+        mixed *= 0.99 / peak
+    return mixed.astype(np.float32)
+
+
+def mix_swap_intro_outro(
+    host_stereo: np.ndarray,
+    sample_rate: int,
+    underlay_mono: np.ndarray,
+    underlay_sr: int,
+    intro_seconds: float = 5.0,
+    outro_seconds: float = 3.0,
+    crossfade_ms: float = 200.0,
+    host_swap_dbfs: float = -32.0,
+    target_swap_dbfs: float = -8.0,
+    host_underlay_dbfs: float = -9.0,
+    target_underlay_dbfs: float = -22.0,
+    duck_db: float = -5.0,
+) -> np.ndarray:
+    """Hybrid: full swap during intro/outro windows, classic underlay in the
+    middle. Useful when the host audio carries music or atmosphere worth
+    keeping in the body of the clip while still dominating the windows that
+    Gemini samples most heavily (start/end).
+    """
+    n = host_stereo.shape[0]
+    intro_n = max(0, min(n, int(intro_seconds * sample_rate)))
+    outro_n = max(0, min(n - intro_n, int(outro_seconds * sample_rate)))
+    crossfade_n = max(8, int(crossfade_ms * sample_rate / 1000.0))
+
+    swap_full = mix_swap_full(
+        host_stereo=host_stereo,
+        sample_rate=sample_rate,
+        underlay_mono=underlay_mono,
+        underlay_sr=underlay_sr,
+        host_target_dbfs=host_swap_dbfs,
+        target_dbfs=target_swap_dbfs,
+    )
+    underlay_mix = mix_underlay_into_audio(
+        host_stereo=host_stereo,
+        sample_rate=sample_rate,
+        underlay_mono=underlay_mono,
+        underlay_sr=underlay_sr,
+        host_target_dbfs=host_underlay_dbfs,
+        underlay_target_dbfs=target_underlay_dbfs,
+        duck_db=duck_db,
+    )
+
+    weight = np.zeros(n, dtype=np.float32)
+    if intro_n > 0:
+        weight[:intro_n] = 1.0
+        fade_end = min(intro_n + crossfade_n, n)
+        fade_len = fade_end - intro_n
+        if fade_len > 0:
+            ramp = np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+            weight[intro_n:fade_end] = np.maximum(weight[intro_n:fade_end], ramp)
+    if outro_n > 0:
+        weight[n - outro_n :] = 1.0
+        fade_start = max(0, n - outro_n - crossfade_n)
+        fade_len = (n - outro_n) - fade_start
+        if fade_len > 0:
+            ramp = np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
+            weight[fade_start : n - outro_n] = np.maximum(
+                weight[fade_start : n - outro_n], ramp
+            )
+
+    weight2 = weight[:, None]
+    mixed = swap_full * weight2 + underlay_mix * (1.0 - weight2)
+    peak = float(np.max(np.abs(mixed)) + 1e-8)
+    if peak > 0.99:
+        mixed *= 0.99 / peak
+    return mixed.astype(np.float32)
+
+
 def generate_tts_underlay(
     target: TopicTarget,
     workdir: str | Path,

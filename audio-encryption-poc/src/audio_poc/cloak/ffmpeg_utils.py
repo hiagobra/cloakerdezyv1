@@ -108,3 +108,65 @@ def remux_audio_into_video(
             "-shortest", str(dst),
         ]
     )
+
+
+def list_keyframe_times(
+    video: str | Path,
+    max_keyframes: int = 200,
+) -> list[float]:
+    """Return I-frame timestamps (in seconds) for ``video`` using ffprobe.
+
+    ``-skip_frame nokey`` makes ffprobe return only key frames. We cap the
+    list because the resulting ffmpeg ``enable='between(t,...)'`` expression
+    has to fit on a single command line; for very long videos with too many
+    key frames we let the caller fall back to scene-change detection.
+    """
+    ensure_ffmpeg()
+    out = run_ffprobe(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-skip_frame", "nokey",
+            "-show_entries", "frame=pts_time",
+            "-of", "csv=p=0",
+            str(video),
+        ]
+    )
+    times: list[float] = []
+    for line in out.splitlines():
+        line = line.strip().rstrip(",")
+        if not line:
+            continue
+        try:
+            t = float(line)
+        except ValueError:
+            continue
+        if t < 0:
+            continue
+        times.append(t)
+    times.sort()
+    return times[: max(0, max_keyframes)]
+
+
+def build_keyframe_enable_expression(
+    keyframe_times: list[float],
+    window_seconds: float = 0.12,
+    max_chars: int = 4000,
+) -> str | None:
+    """Build an ffmpeg ``enable='...'`` expression that toggles the filter on
+    only during a small window around each keyframe.
+
+    Returns ``None`` if ``keyframe_times`` is empty.
+
+    Falls back to a scene-change expression (``gt(scene\\,0.3)``) if the
+    expression would exceed ``max_chars`` (ffmpeg has a soft limit on
+    filtergraph length depending on shell).
+    """
+    if not keyframe_times:
+        return None
+
+    parts = [f"between(t,{t:.3f},{t + window_seconds:.3f})" for t in keyframe_times]
+    expr = "+".join(parts)
+    if len(expr) > max_chars:
+        return "gt(scene\\,0.3)"
+    return expr

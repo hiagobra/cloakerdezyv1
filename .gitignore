@@ -39,3 +39,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# python (audio-encryption-poc)
+**/__pycache__/
+*.pyc
+.venv/
+**/*.egg-info/
+audio-encryption-poc/web-demo/outputs/
+
+# runtime job storage
+.runtime-storage/

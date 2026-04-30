@@ -9,7 +9,34 @@ App Next.js 16 com cadastro/login Supabase, fluxo de aprovação manual pelo adm
 - Next.js 16 (App Router) + TypeScript
 - Supabase Auth, Postgres, RLS
 - Service Role para criar contas (sem rate limit de email)
-- Pipeline Python opcional para camuflagem (uso local)
+- Pipeline Python multimodal (cloak) com 4 camadas de evasão contra moderadores tipo Gemini
+
+## Camuflagem multimodal (cloak)
+
+A pipeline Python em `audio-encryption-poc/` empilha 4 camadas para fazer um
+moderador multimodal (Gemini, GPT-4o, etc.) classificar o vídeo em um tópico-alvo
+diferente do real:
+
+1. **Áudio**: TTS underlay com sidechain duck e (opcional) ataque adversarial PGD em Whisper.
+2. **Visual**: overlay de texto via `ffmpeg drawtext`, steganografia downscale, patch CLIP opcional.
+3. **Track**: faixa de legenda SRT injetada como soft subtitle + metadata MP4 (title/comment/keywords).
+4. **Verify**: re-classificação via Whisper/YAMNet local ou via Gemini API (`google-generativeai`).
+
+O dashboard expõe duas dimensões:
+
+- **Intensidade** (`leve` / `medio` / `forte` -> profile `minimal` / `standard` / `aggressive`).
+- **Tópico-alvo** (financas_pt, tecnologia_pt, culinaria_pt, finance_en, fitness_en).
+
+**Expectativa realista:** não existe “100% invisível para qualquer máquina”. O que a
+stack faz é **empilhar sinais fortes do tópico-alvo** (texto em frame, legenda,
+metadata, áudio sintético) para que modelos como o Gemini **priorizem** esse
+contexto em vez do conteúdo original. Os **pixels** da cena (comida, pessoa,
+etc.) continuam lá; se o modelo der muito peso a visão pura, ainda pode haver
+resíduo do tópico real. Quanto mais alta a intensidade (`medio`/`forte`), mais
+agressivos são overlay e âncora de legenda — maior chance de classificação
+errada para o alvo, porém mais óbvio visualmente para humanos.
+
+Detalhes técnicos completos em [audio-encryption-poc/README.md](audio-encryption-poc/README.md).
 
 ## Fluxo do produto
 
@@ -52,6 +79,30 @@ npm.cmd run worker:camouflage
 ```
 
 O worker só faz sentido local (com Python e ffmpeg instalados). Em produção/Vercel a camuflagem usa fallback inline e marca o job como `failed` se a pipeline não estiver disponível.
+
+### Setup da pipeline Python (uma vez)
+
+```bash
+cd audio-encryption-poc
+python -m venv .venv
+# Linux/macOS: source .venv/bin/activate    Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+pip install -e .
+```
+
+Extras opcionais (instale conforme o profile desejado):
+
+```bash
+pip install -e .[whisper]   # PGD direcionado em Whisper (profile aggressive)
+pip install -e .[gemini]    # verify Gemini via CLI
+pip install -e .[all]       # tudo (inclui torch + tensorflow)
+```
+
+Sistema requer:
+
+- `ffmpeg` e `ffprobe` no PATH (obrigatório).
+- Em Linux, para que a camada `audio_tts` funcione: `sudo apt install espeak-ng`.
+  Sem isso a camada falha graciosamente; as outras 3 (overlay/SRT/metadata) seguem funcionando.
 
 ## 2) Configurar Supabase
 
@@ -130,5 +181,32 @@ Boa prática extra: em **Auth > Providers > Email** desative confirmação obrig
 
 - **"Cadastro pendente de aprovação"**: aprove em `/admin`.
 - **"Origem nao autorizada"**: garanta que está acessando o domínio configurado.
-- **Camuflagem `failed`**: pipeline Python não disponível neste ambiente. Use local.
+- **Camuflagem `failed`**: pipeline Python não disponível neste ambiente. Verifique se `AUDIO_POC_PATH` aponta para a pasta `audio-encryption-poc/` correta e se `pip install -e .` foi rodado dentro dela.
+- **Camada `audio_tts` falhou em Linux**: instale `espeak-ng` (`sudo apt install espeak-ng`).
 - **Login dá 401**: senha incorreta ou usuário ainda não criado.
+
+## 8) Deploy de atualização (resumo)
+
+Local:
+
+```bash
+git add -A
+git commit -m "feat: <descrição>"
+git push origin main
+```
+
+Na VPS:
+
+```bash
+cd /CAMINHO/cloakerdezyv1
+git pull origin main
+cd audio-encryption-poc
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e .
+deactivate
+cd ..
+npm ci
+npm run build
+pm2 restart NOME_DO_APP
+```

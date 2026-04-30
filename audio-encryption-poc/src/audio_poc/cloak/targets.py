@@ -26,6 +26,11 @@ class TopicTarget:
     yamnet_class: str
     vlm_caption: str
     description: str = ""
+    # Naturalistic brand cue for the visual brand_overlay layer. Empty
+    # ``brand_label`` disables the layer for this preset even when the global
+    # flag is on. ``brand_color`` is a hex string used as the badge accent.
+    brand_label: str = ""
+    brand_color: str = "#9d6bff"
 
 
 TOPIC_TARGETS: dict[str, TopicTarget] = {
@@ -59,6 +64,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="an educational finance lecture about fixed income investments and CDI",
         description="Personal finance / fixed income education (Portuguese).",
+        brand_label="EduInvest BR",
+        brand_color="#16a34a",
     ),
     "tecnologia_pt": TopicTarget(
         key="tecnologia_pt",
@@ -88,6 +95,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="a programming tutorial about linux servers, docker containers and nginx",
         description="Tech / DevOps tutorial (Portuguese).",
+        brand_label="DevOps Lab",
+        brand_color="#0ea5e9",
     ),
     "culinaria_pt": TopicTarget(
         key="culinaria_pt",
@@ -117,6 +126,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="a cooking tutorial showing how to bake a chocolate cake",
         description="Cooking / recipe (Portuguese).",
+        brand_label="Cozinha em Casa",
+        brand_color="#dc2626",
     ),
     "finance_en": TopicTarget(
         key="finance_en",
@@ -147,6 +158,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="an educational personal finance video about long term index fund investing",
         description="Personal finance / long-term investing (English).",
+        brand_label="WealthFocus",
+        brand_color="#15803d",
     ),
     "fitness_en": TopicTarget(
         key="fitness_en",
@@ -173,6 +186,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="a fitness video showing a strength training upper body workout in a gym",
         description="Fitness / strength training (English).",
+        brand_label="GymLab Pro",
+        brand_color="#f97316",
     ),
     "saude_pt": TopicTarget(
         key="saude_pt",
@@ -203,6 +218,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="an educational video about general health, wellness habits and disease prevention",
         description="Saúde geral e bem-estar (Portuguese).",
+        brand_label="VivaSaude",
+        brand_color="#0d9488",
     ),
     "nutricao_pt": TopicTarget(
         key="nutricao_pt",
@@ -233,6 +250,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="an educational video about healthy nutrition, macros and meal preparation recipes",
         description="Nutrição e alimentação equilibrada (Portuguese).",
+        brand_label="Nutri Macros",
+        brand_color="#65a30d",
     ),
     "motivacional_pt": TopicTarget(
         key="motivacional_pt",
@@ -263,6 +282,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="a self-development motivational video about discipline, habits and productivity mindset",
         description="Motivacional / desenvolvimento pessoal (Portuguese).",
+        brand_label="Mindset Pro",
+        brand_color="#7c3aed",
     ),
     "marketing_pt": TopicTarget(
         key="marketing_pt",
@@ -293,6 +314,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="a digital marketing class about copywriting, sales funnels and paid traffic strategies",
         description="Marketing digital / copywriting (Portuguese).",
+        brand_label="GrowthLab",
+        brand_color="#0284c7",
     ),
     "educacao_infantil_pt": TopicTarget(
         key="educacao_infantil_pt",
@@ -323,6 +346,8 @@ TOPIC_TARGETS: dict[str, TopicTarget] = {
         yamnet_class="Speech",
         vlm_caption="an educational video about early childhood development and pedagogical activities for kids",
         description="Educação infantil / primeira infância (Portuguese).",
+        brand_label="Pequenos Saberes",
+        brand_color="#eab308",
     ),
 }
 

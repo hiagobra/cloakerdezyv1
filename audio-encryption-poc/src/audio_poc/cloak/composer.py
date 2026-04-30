@@ -38,49 +38,81 @@ from .targets import TopicTarget, get_target
 PROFILES: dict[str, dict[str, bool]] = {
     "minimal": {
         "audio_tts": False,
+        "audio_injection_bed": False,
         "audio_whisper_attack": False,
         "audio_ensemble": False,
         "audio_yamnet": False,
+        "audio_rir_robust": False,
+        "audio_mel_budget": False,
+        "audio_more_length": False,
+        "audio_psycho_post": False,
+        "audio_formant_suppress": False,
         "visual_overlay": True,
         "visual_prompt_inject": False,
+        "visual_brand_overlay": False,
         "visual_stego": False,
         "visual_surrogate": False,
+        "visual_keyframes_only": False,
         "track_srt": True,
         "track_metadata": True,
     },
     "standard": {
         "audio_tts": True,
+        "audio_injection_bed": True,
         "audio_whisper_attack": False,
         "audio_ensemble": False,
         "audio_yamnet": False,
+        "audio_rir_robust": False,
+        "audio_mel_budget": False,
+        "audio_more_length": False,
+        "audio_psycho_post": True,
+        "audio_formant_suppress": False,
         "visual_overlay": True,
         "visual_prompt_inject": True,
+        "visual_brand_overlay": True,
         "visual_stego": False,
         "visual_surrogate": False,
+        "visual_keyframes_only": False,
         "track_srt": True,
         "track_metadata": True,
     },
     "aggressive": {
         "audio_tts": True,
+        "audio_injection_bed": True,
         "audio_whisper_attack": True,
         "audio_ensemble": False,
         "audio_yamnet": False,
+        "audio_rir_robust": True,
+        "audio_mel_budget": True,
+        "audio_more_length": False,
+        "audio_psycho_post": True,
+        "audio_formant_suppress": True,
         "visual_overlay": True,
         "visual_prompt_inject": True,
+        "visual_brand_overlay": True,
         "visual_stego": True,
         "visual_surrogate": False,
+        "visual_keyframes_only": True,
         "track_srt": True,
         "track_metadata": True,
     },
     "paranoid": {
         "audio_tts": True,
+        "audio_injection_bed": True,
         "audio_whisper_attack": True,
         "audio_ensemble": True,
         "audio_yamnet": False,
+        "audio_rir_robust": True,
+        "audio_mel_budget": True,
+        "audio_more_length": True,
+        "audio_psycho_post": True,
+        "audio_formant_suppress": True,
         "visual_overlay": True,
         "visual_prompt_inject": True,
+        "visual_brand_overlay": True,
         "visual_stego": True,
         "visual_surrogate": True,
+        "visual_keyframes_only": True,
         "track_srt": True,
         "track_metadata": True,
     },
@@ -99,6 +131,20 @@ _PROMPT_INJECT_DEFAULTS: dict[str, str] = {
 }
 
 
+# How the TTS-target track interacts with the host audio when the TTS layer is
+# enabled. ``underlay`` is the historical behavior (target mixed below host).
+# ``intro_outro`` swaps the first/last seconds and underlays the middle.
+# ``full`` makes the TTS-target the dominant audio and reduces the host to
+# near-silence so Gemini/Whisper transcripts read the target topic.
+_AUDIO_SWAP_DEFAULTS: dict[str, str] = {
+    "minimal": "underlay",
+    "standard": "underlay",
+    "aggressive": "full",
+    "paranoid": "full",
+}
+_AUDIO_SWAP_MODES = ("underlay", "intro_outro", "full")
+
+
 @dataclass
 class CloakOptions:
     overlay_mode: str = "subtle"
@@ -113,9 +159,35 @@ class CloakOptions:
     underlay_host_dbfs: float = -9.0
     underlay_target_dbfs: float = -22.0
     underlay_duck_db: float = -5.0
+    # ``auto`` resolves to the per-profile default in _AUDIO_SWAP_DEFAULTS.
+    # Allowed manual values: "underlay" | "intro_outro" | "full".
+    audio_swap_mode: str = "auto"
+    swap_host_dbfs: float = -32.0
+    swap_target_dbfs: float = -8.0
+    swap_intro_seconds: float = 5.0
+    swap_outro_seconds: float = 3.0
+    # Audio reinforcement layers (Plan: audio adversarial reforcado).
+    injection_bed_dbfs: float = -34.0
+    mel_epsilon: float | None = 0.5
+    more_length_factor: float = 5.0
+    more_length_alpha: float = 0.05
     # ``auto`` resolves to the per-profile default in _PROMPT_INJECT_DEFAULTS.
     # Allowed manual values: "none" | "soft" | "hard".
     prompt_inject_strength: str = "auto"
+    # Formant suppression on the original audio (pesquisa.md item 2.4/2.5
+    # lateral). Default applied when ``audio_formant_suppress`` flag is on.
+    formant_depth_db: float = -14.0
+    formant_q: float = 12.0
+    # Brand-logo overlay (pesquisa.md item 3.10 MVPatch lineage).
+    brand_overlay_position: str = "corner_br"
+    brand_overlay_opacity: float = 0.85
+    brand_overlay_width_ratio: float = 0.14
+    # Surrogate patch caching + sparse keyframe attack (pesquisa.md items 3.2
+    # universal patch, 3.14 Wei et al. sparse video).
+    surrogate_patch_cache_dir: str | None = None
+    surrogate_force_recompute: bool = False
+    visual_keyframes_only: bool = False
+    visual_keyframe_window_seconds: float = 0.12
     keep_workdir: bool = False
 
 
@@ -155,9 +227,11 @@ def _audio_layer(
     """Returns a video file with the (possibly cloaked) audio remuxed in."""
     if not (
         flags.get("audio_tts")
+        or flags.get("audio_injection_bed")
         or flags.get("audio_whisper_attack")
         or flags.get("audio_ensemble")
         or flags.get("audio_yamnet")
+        or flags.get("audio_formant_suppress")
     ):
         return video_in
 
@@ -169,29 +243,121 @@ def _audio_layer(
     elif host.shape[1] > 2:
         host = host[:, :2]
 
+    host_clean = host.copy()
     current_audio_path: Path = src_wav
 
+    if flags.get("audio_formant_suppress"):
+        try:
+            from .audio.formant_suppress import suppress_formants
+            _log(
+                result,
+                (
+                    f"[audio] formant suppress depth={opts.formant_depth_db:.1f} dB"
+                    f" q={opts.formant_q:.1f} (degrada ASR sobre o original)"
+                ),
+            )
+            host = suppress_formants(
+                host_stereo=host,
+                sample_rate=sr,
+                depth_db=opts.formant_depth_db,
+                q=opts.formant_q,
+            )
+            current_audio_path = workdir / "audio_after_formant.wav"
+            sf.write(str(current_audio_path), host, sr)
+            result.layers_applied.append("audio_formant_suppress")
+        except RuntimeError as exc:
+            _log(result, f"[audio] aviso: formant_suppress falhou ({exc})")
+
     if flags.get("audio_tts"):
-        from .audio.tts_underlay import generate_tts_underlay, mix_underlay_into_audio
-        _log(result, "[audio] gerando TTS underlay")
-        underlay, u_sr = generate_tts_underlay(target, workdir, sample_rate=sr)
-        mixed = mix_underlay_into_audio(
-            host_stereo=host,
-            sample_rate=sr,
-            underlay_mono=underlay,
-            underlay_sr=u_sr,
-            host_target_dbfs=opts.underlay_host_dbfs,
-            underlay_target_dbfs=opts.underlay_target_dbfs,
-            duck_db=opts.underlay_duck_db,
+        from .audio.tts_underlay import (
+            generate_tts_underlay,
+            mix_swap_full,
+            mix_swap_intro_outro,
+            mix_underlay_into_audio,
         )
-        current_audio_path = workdir / "audio_after_tts.wav"
+
+        swap_mode = (opts.audio_swap_mode or "auto").lower()
+        if swap_mode not in _AUDIO_SWAP_MODES:
+            _log(
+                result,
+                f"[audio] audio_swap_mode invalido={swap_mode!r}; usando underlay",
+            )
+            swap_mode = "underlay"
+
+        _log(result, f"[audio] gerando TTS (mode={swap_mode})")
+        underlay, u_sr = generate_tts_underlay(target, workdir, sample_rate=sr)
+
+        if swap_mode == "full":
+            mixed = mix_swap_full(
+                host_stereo=host,
+                sample_rate=sr,
+                underlay_mono=underlay,
+                underlay_sr=u_sr,
+                host_target_dbfs=opts.swap_host_dbfs,
+                target_dbfs=opts.swap_target_dbfs,
+            )
+        elif swap_mode == "intro_outro":
+            mixed = mix_swap_intro_outro(
+                host_stereo=host,
+                sample_rate=sr,
+                underlay_mono=underlay,
+                underlay_sr=u_sr,
+                intro_seconds=opts.swap_intro_seconds,
+                outro_seconds=opts.swap_outro_seconds,
+                host_swap_dbfs=opts.swap_host_dbfs,
+                target_swap_dbfs=opts.swap_target_dbfs,
+                host_underlay_dbfs=opts.underlay_host_dbfs,
+                target_underlay_dbfs=opts.underlay_target_dbfs,
+                duck_db=opts.underlay_duck_db,
+            )
+        else:
+            mixed = mix_underlay_into_audio(
+                host_stereo=host,
+                sample_rate=sr,
+                underlay_mono=underlay,
+                underlay_sr=u_sr,
+                host_target_dbfs=opts.underlay_host_dbfs,
+                underlay_target_dbfs=opts.underlay_target_dbfs,
+                duck_db=opts.underlay_duck_db,
+            )
+
+        current_audio_path = workdir / f"audio_after_tts_{swap_mode}.wav"
         sf.write(str(current_audio_path), mixed, sr)
         host = mixed
-        result.layers_applied.append("audio_tts")
+        result.layers_applied.append(f"audio_tts_{swap_mode}")
+
+    if flags.get("audio_injection_bed"):
+        from .audio.injection_bed import mix_injection_bed
+        _log(
+            result,
+            f"[audio] mixando injection bed (keywords) em {opts.injection_bed_dbfs:.1f} dBFS",
+        )
+        try:
+            host = mix_injection_bed(
+                host_stereo=host,
+                sample_rate=sr,
+                target=target,
+                workdir=workdir,
+                bed_dbfs=opts.injection_bed_dbfs,
+            )
+            current_audio_path = workdir / "audio_after_injection_bed.wav"
+            sf.write(str(current_audio_path), host, sr)
+            result.layers_applied.append("audio_injection_bed")
+        except RuntimeError as exc:
+            _log(result, f"[audio] aviso: injection bed falhou ({exc}); seguindo sem ela.")
 
     if flags.get("audio_whisper_attack"):
         from .audio.whisper_attack import cloak_to_target
-        _log(result, f"[audio] PGD direcionado em Whisper-{opts.whisper_model} ({opts.whisper_iters} iters)")
+        rir_on = bool(flags.get("audio_rir_robust"))
+        more_on = bool(flags.get("audio_more_length"))
+        mel_eps = opts.mel_epsilon if flags.get("audio_mel_budget") else None
+        _log(
+            result,
+            (
+                f"[audio] PGD direcionado em Whisper-{opts.whisper_model} ({opts.whisper_iters} iters)"
+                f" rir={rir_on} mel_eps={mel_eps} more={more_on}"
+            ),
+        )
         mono = host.mean(axis=1).astype(np.float32)
         attack = cloak_to_target(
             audio_np=mono,
@@ -201,10 +367,21 @@ def _audio_layer(
             model_name=opts.whisper_model,
             epsilon=opts.whisper_epsilon,
             iters=opts.whisper_iters,
+            rir_augment=rir_on,
+            mel_epsilon=mel_eps,
+            length_explosion=more_on,
+            length_factor=opts.more_length_factor,
+            length_alpha=opts.more_length_alpha,
             progress_callback=lambda s, n, l: _log(result, f"  whisper step {s}/{n} loss={l:.3f}") if s % 250 == 0 else None,
         )
         result.metrics["whisper_attack_decoded"] = attack.decoded_text
         result.metrics["whisper_attack_loss"] = attack.final_loss
+        if rir_on:
+            result.layers_applied.append("audio_rir_robust")
+        if mel_eps is not None:
+            result.layers_applied.append("audio_mel_budget")
+        if more_on:
+            result.layers_applied.append("audio_more_length")
 
         from scipy import signal as sp_signal
         if attack.sample_rate != sr:
@@ -268,6 +445,35 @@ def _audio_layer(
         sf.write(str(current_audio_path), host, sr)
         result.layers_applied.append("audio_yamnet")
 
+    if flags.get("audio_psycho_post") and (
+        flags.get("audio_whisper_attack")
+        or flags.get("audio_ensemble")
+        or flags.get("audio_yamnet")
+    ):
+        try:
+            from .audio.psychoacoustic import (
+                global_masking_threshold,
+                project_under_mask,
+            )
+            _log(result, "[audio] aplicando projecao psychoacoustic (Qin et al. mask)")
+            ref_mono = host_clean.mean(axis=1).astype(np.float32)
+            cur_mono = host.mean(axis=1).astype(np.float32)
+            n = min(ref_mono.shape[0], cur_mono.shape[0])
+            ref_mono = ref_mono[:n]
+            cur_mono = cur_mono[:n]
+            delta = cur_mono - ref_mono
+
+            _, _, threshold = global_masking_threshold(ref_mono, sample_rate=sr)
+            delta_masked = project_under_mask(delta, threshold, sample_rate=sr)
+            n2 = min(delta_masked.shape[0], ref_mono.shape[0])
+            new_mono = (ref_mono[:n2] + delta_masked[:n2]).astype(np.float32)
+            host = np.stack([new_mono, new_mono], axis=1)
+            current_audio_path = workdir / "audio_after_psycho.wav"
+            sf.write(str(current_audio_path), host, sr)
+            result.layers_applied.append("audio_psycho_post")
+        except Exception as exc:
+            _log(result, f"[audio] aviso: psycho post falhou ({exc}); seguindo sem ela.")
+
     result.audio_artifact = current_audio_path
 
     remuxed = workdir / "video_with_cloaked_audio.mp4"
@@ -311,6 +517,44 @@ def _visual_layer(
         elif strength != "none":
             _log(result, f"[visual] prompt_inject_strength inválido: {strength!r} (esperado none/soft/hard/auto)")
 
+    if flags.get("visual_brand_overlay"):
+        if not (target.brand_label or "").strip():
+            _log(result, f"[visual] brand_overlay pulado: target {target.key!r} sem brand_label")
+        else:
+            from .visual.brand_overlay import BrandOverlayConfig, apply_brand_overlay
+            from .ffmpeg_utils import (
+                build_keyframe_enable_expression,
+                list_keyframe_times,
+            )
+
+            keyframes_enable: str | None = None
+            if flags.get("visual_keyframes_only") or opts.visual_keyframes_only:
+                try:
+                    kf = list_keyframe_times(current, max_keyframes=200)
+                    keyframes_enable = build_keyframe_enable_expression(
+                        kf, window_seconds=opts.visual_keyframe_window_seconds
+                    )
+                except RuntimeError as exc:
+                    _log(result, f"[visual] aviso: list_keyframe_times falhou ({exc})")
+
+            cfg = BrandOverlayConfig(
+                position=opts.brand_overlay_position,
+                opacity=opts.brand_overlay_opacity,
+                width_ratio=opts.brand_overlay_width_ratio,
+                keyframes_enable=keyframes_enable,
+            )
+            mode_msg = "todos os frames" if not keyframes_enable else "keyframes only"
+            _log(
+                result,
+                f"[visual] aplicando brand overlay '{target.brand_label}' ({mode_msg})",
+            )
+            nxt = workdir / "video_after_brand.mp4"
+            apply_brand_overlay(current, target, nxt, workdir=workdir, cfg=cfg)
+            current = nxt
+            result.layers_applied.append(
+                "visual_brand_overlay_keyframes" if keyframes_enable else "visual_brand_overlay"
+            )
+
     if flags.get("visual_stego"):
         from .visual.stego_downscale import overlay_stego_on_video
         _log(result, "[visual] aplicando steganografia downscale")
@@ -321,16 +565,31 @@ def _visual_layer(
 
     if flags.get("visual_surrogate"):
         from .visual.surrogate_patch import apply_surrogate_patch
-        _log(result, f"[visual] otimizando patch CLIP ({opts.surrogate_iters} iters) e aplicando")
+        keyframes_only = bool(
+            flags.get("visual_keyframes_only") or opts.visual_keyframes_only
+        )
+        _log(
+            result,
+            (
+                f"[visual] surrogate patch (cache_dir={opts.surrogate_patch_cache_dir or 'default'}, "
+                f"force={opts.surrogate_force_recompute}, keyframes_only={keyframes_only})"
+            ),
+        )
         nxt = workdir / "video_after_surrogate.mp4"
         apply_surrogate_patch(
             current, target, nxt,
             workdir=workdir,
             patch_size=opts.surrogate_patch_size,
             iters=opts.surrogate_iters,
+            cache_dir=opts.surrogate_patch_cache_dir,
+            force_recompute=opts.surrogate_force_recompute,
+            keyframes_only=keyframes_only,
+            keyframe_window_seconds=opts.visual_keyframe_window_seconds,
         )
         current = nxt
-        result.layers_applied.append("visual_surrogate")
+        result.layers_applied.append(
+            "visual_surrogate_keyframes" if keyframes_only else "visual_surrogate"
+        )
 
     return current
 
@@ -434,6 +693,15 @@ def cloak_video(
     if resolved_strength == "none":
         flags["visual_prompt_inject"] = False
 
+    requested_swap = (opts.audio_swap_mode or "auto").lower()
+    if requested_swap == "auto":
+        resolved_swap = _AUDIO_SWAP_DEFAULTS.get(profile, "underlay")
+    elif requested_swap in _AUDIO_SWAP_MODES:
+        resolved_swap = requested_swap
+    else:
+        resolved_swap = "underlay"
+    opts = replace(opts, audio_swap_mode=resolved_swap)
+
     include_ai_instruction = profile != "minimal"
 
     in_path = Path(input_path).resolve()
@@ -449,6 +717,7 @@ def cloak_video(
     _log(result, f"profile={profile} target={target_preset}")
     _log(result, f"flags={flags}")
     _log(result, f"prompt_inject_strength={resolved_strength} ai_instruction_in_srt={include_ai_instruction}")
+    _log(result, f"audio_swap_mode={resolved_swap}")
     _log(result, f"input duration={info.duration:.2f}s {info.width}x{info.height}@{info.fps:.2f}fps")
 
     use_explicit_workdir = workdir is not None
