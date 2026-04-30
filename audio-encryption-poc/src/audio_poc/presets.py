@@ -1,6 +1,16 @@
 """Preset definitions for protection intensity."""
 
 PRESETS = {
+    # Extra-subtle DSP path for "medio": shift ASR features with minimal audibility.
+    "cloak_subtle": {
+        "phase_strength": 0.18,
+        "noise_base": 0.002,
+        "noise_dynamic": 0.006,
+        "noise_low_hz": 1300.0,
+        "noise_high_hz": 5200.0,
+        "target_peak_dbfs": -1.2,
+        "target_rms_dbfs": -20.5,
+    },
     "light": {
         "phase_strength": 0.25,
         "noise_base": 0.003,

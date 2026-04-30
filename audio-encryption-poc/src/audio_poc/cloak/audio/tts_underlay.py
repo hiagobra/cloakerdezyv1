@@ -43,7 +43,12 @@ def _select_voice(engine, language_iso2: str):
     return None
 
 
-def synthesize_tts(text: str, language_iso2: str, dst_wav: str | Path, rate: int = 175) -> Path:
+def synthesize_tts(
+    text: str,
+    language_iso2: str,
+    dst_wav: str | Path,
+    rate: int = 175,
+) -> Path:
     try:
         import pyttsx3
     except ImportError as exc:
@@ -254,11 +259,12 @@ def generate_tts_underlay(
     target: TopicTarget,
     workdir: str | Path,
     sample_rate: int = 48000,
+    tts_speech_rate: int = 175,
 ) -> tuple[np.ndarray, int]:
     work = Path(workdir)
     work.mkdir(parents=True, exist_ok=True)
     tts_wav = work / f"tts_{target.key}.wav"
-    synthesize_tts(target.transcript, target.language, tts_wav)
+    synthesize_tts(target.transcript, target.language, tts_wav, rate=tts_speech_rate)
     audio = _read_mono(tts_wav, sample_rate)
     return audio, sample_rate
 

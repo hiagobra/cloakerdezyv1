@@ -56,7 +56,13 @@ export async function GET(request: Request, context: RouteContext) {
     }
   } else if (job.status === "processing") {
     const ageMs = Date.now() - new Date(job.updatedAt).getTime();
-    const maxProcessingMs = 5 * 60 * 1000;
+    // PGD (forte) + vídeos longos podem levar muito mais que o modo leve/médio.
+    const maxProcessingMs =
+      job.preset === "forte"
+        ? 90 * 60 * 1000
+        : job.preset === "medio"
+          ? 30 * 60 * 1000
+          : 15 * 60 * 1000;
 
     if (ageMs > maxProcessingMs) {
       job.status = "failed";

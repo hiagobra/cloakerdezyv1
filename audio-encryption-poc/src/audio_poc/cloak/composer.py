@@ -45,6 +45,7 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_rir_robust": False,
         "audio_mel_budget": False,
         "audio_more_length": False,
+        "audio_dsp_cloak": False,
         "audio_psycho_post": False,
         "audio_formant_suppress": False,
         "visual_overlay": True,
@@ -65,6 +66,7 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_rir_robust": False,
         "audio_mel_budget": False,
         "audio_more_length": False,
+        "audio_dsp_cloak": True,
         "audio_psycho_post": True,
         "audio_formant_suppress": False,
         "visual_overlay": True,
@@ -82,9 +84,12 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_whisper_attack": True,
         "audio_ensemble": False,
         "audio_yamnet": False,
-        "audio_rir_robust": True,
-        "audio_mel_budget": True,
+        # RIR + mel por step multiplicam custo do PGD; desligado no default para
+        # vídeos longos terminarem no tempo esperado (pesquisa.md: trade-off robustez x CPU).
+        "audio_rir_robust": False,
+        "audio_mel_budget": False,
         "audio_more_length": False,
+        "audio_dsp_cloak": False,
         "audio_psycho_post": True,
         "audio_formant_suppress": True,
         "visual_overlay": True,
@@ -105,6 +110,7 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_rir_robust": True,
         "audio_mel_budget": True,
         "audio_more_length": True,
+        "audio_dsp_cloak": False,
         "audio_psycho_post": True,
         "audio_formant_suppress": True,
         "visual_overlay": True,
@@ -152,7 +158,12 @@ class CloakOptions:
     overlay_font_size: int = 22
     whisper_model: str = "base"
     whisper_epsilon: float = 0.005
+    # Custo ~ linear em iters; 420 + eps maior costuma bastar p/ base no GPU/CPU médio.
     whisper_iters: int = 1500
+    # pyttsx3: valores ~160–175 soam mais naturais em underlay “medio”.
+    tts_speech_rate: int = 175
+    # Preset em `audio_poc.presets` (ex.: cloak_subtle, light) para fase+ruído mascarado.
+    dsp_cloak_preset: str = "cloak_subtle"
     ensemble_iters: int = 1000
     surrogate_iters: int = 500
     surrogate_patch_size: int = 96
@@ -204,6 +215,27 @@ def _log(result: CloakResult, msg: str) -> None:
     result.log.append(msg)
 
 
+def _profile_audio_tuning(profile: str, opts: CloakOptions) -> CloakOptions:
+    """Níveis de mix, orçamento PGD e preset DSP por perfil (defaults do produto)."""
+    if profile == "standard":
+        return replace(
+            opts,
+            underlay_target_dbfs=-24.0,
+            duck_db=-3.0,
+            injection_bed_dbfs=-44.0,
+            dsp_cloak_preset="cloak_subtle",
+            tts_speech_rate=168,
+        )
+    if profile == "aggressive":
+        return replace(
+            opts,
+            whisper_iters=min(420, opts.whisper_iters),
+            whisper_epsilon=max(opts.whisper_epsilon, 0.006),
+            injection_bed_dbfs=-40.0,
+        )
+    return opts
+
+
 def _resolve_layers(profile: str, layer_overrides: dict[str, bool] | None) -> dict[str, bool]:
     if profile not in PROFILES:
         raise ValueError(f"Profile desconhecido: {profile!r}. Use {sorted(PROFILES)}.")
@@ -232,6 +264,7 @@ def _audio_layer(
         or flags.get("audio_ensemble")
         or flags.get("audio_yamnet")
         or flags.get("audio_formant_suppress")
+        or flags.get("audio_dsp_cloak")
     ):
         return video_in
 
@@ -284,8 +317,13 @@ def _audio_layer(
             )
             swap_mode = "underlay"
 
-        _log(result, f"[audio] gerando TTS (mode={swap_mode})")
-        underlay, u_sr = generate_tts_underlay(target, workdir, sample_rate=sr)
+        _log(result, f"[audio] gerando TTS (mode={swap_mode}, rate={opts.tts_speech_rate})")
+        underlay, u_sr = generate_tts_underlay(
+            target,
+            workdir,
+            sample_rate=sr,
+            tts_speech_rate=opts.tts_speech_rate,
+        )
 
         if swap_mode == "full":
             mixed = mix_swap_full(
@@ -345,6 +383,27 @@ def _audio_layer(
             result.layers_applied.append("audio_injection_bed")
         except RuntimeError as exc:
             _log(result, f"[audio] aviso: injection bed falhou ({exc}); seguindo sem ela.")
+
+    if flags.get("audio_dsp_cloak"):
+        from ..pipeline import apply_protection_pipeline
+        from ..presets import PRESETS
+
+        preset_name = (opts.dsp_cloak_preset or "cloak_subtle").strip()
+        if preset_name not in PRESETS:
+            preset_name = "cloak_subtle" if "cloak_subtle" in PRESETS else "light"
+        _log(
+            result,
+            f"[audio] DSP rápido ({preset_name}): fase stereo + ruído em banda para features de ASR",
+        )
+        pl = apply_protection_pipeline(
+            host.astype(np.float32),
+            sr,
+            preset_name=preset_name,
+        )
+        host = pl.audio.astype(np.float32)
+        current_audio_path = workdir / f"audio_after_dsp_{preset_name}.wav"
+        sf.write(str(current_audio_path), host, sr)
+        result.layers_applied.append(f"audio_dsp_cloak_{preset_name}")
 
     if flags.get("audio_whisper_attack"):
         from .audio.whisper_attack import cloak_to_target
@@ -445,28 +504,33 @@ def _audio_layer(
         sf.write(str(current_audio_path), host, sr)
         result.layers_applied.append("audio_yamnet")
 
-    if flags.get("audio_psycho_post") and (
+    touched_semantic = bool(
+        flags.get("audio_tts")
+        or flags.get("audio_injection_bed")
+        or flags.get("audio_dsp_cloak")
+    )
+    touched_neural = bool(
         flags.get("audio_whisper_attack")
         or flags.get("audio_ensemble")
         or flags.get("audio_yamnet")
+    )
+    if flags.get("audio_psycho_post") and (
+        touched_semantic or touched_neural or flags.get("audio_formant_suppress")
     ):
         try:
-            from .audio.psychoacoustic import (
-                global_masking_threshold,
-                project_under_mask,
+            from .audio.psychoacoustic import constrain_modification_psychoacoustic
+
+            _log(
+                result,
+                "[audio] projeção psicoacústica (máscara vs. áudio original, por blocos) — reduz artefatos audíveis",
             )
-            _log(result, "[audio] aplicando projecao psychoacoustic (Qin et al. mask)")
             ref_mono = host_clean.mean(axis=1).astype(np.float32)
             cur_mono = host.mean(axis=1).astype(np.float32)
-            n = min(ref_mono.shape[0], cur_mono.shape[0])
-            ref_mono = ref_mono[:n]
-            cur_mono = cur_mono[:n]
-            delta = cur_mono - ref_mono
-
-            _, _, threshold = global_masking_threshold(ref_mono, sample_rate=sr)
-            delta_masked = project_under_mask(delta, threshold, sample_rate=sr)
-            n2 = min(delta_masked.shape[0], ref_mono.shape[0])
-            new_mono = (ref_mono[:n2] + delta_masked[:n2]).astype(np.float32)
+            new_mono = constrain_modification_psychoacoustic(
+                ref_mono,
+                cur_mono,
+                sample_rate=sr,
+            )
             host = np.stack([new_mono, new_mono], axis=1)
             current_audio_path = workdir / "audio_after_psycho.wav"
             sf.write(str(current_audio_path), host, sr)
@@ -683,6 +747,7 @@ def cloak_video(
     target = get_target(target_preset)
     flags = _resolve_layers(profile, layer_overrides)
     opts = _overlay_opts_for_profile(profile, options or CloakOptions())
+    opts = _profile_audio_tuning(profile, opts)
 
     requested_strength = (opts.prompt_inject_strength or "auto").lower()
     if requested_strength == "auto":
