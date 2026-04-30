@@ -36,6 +36,9 @@ from .targets import TopicTarget, get_target
 
 
 PROFILES: dict[str, dict[str, bool]] = {
+    # Presets minimal/standard/aggressive = áudio-first: sem re-encode de vídeo
+    # por drawtext/stego/patch (rápido). SRT + metadata seguem ativos.
+    # Perfil paranoid mantém o stack visual completo (CLI / casos especiais).
     "minimal": {
         "audio_tts": False,
         "audio_injection_bed": False,
@@ -48,7 +51,7 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_dsp_cloak": False,
         "audio_psycho_post": False,
         "audio_formant_suppress": False,
-        "visual_overlay": True,
+        "visual_overlay": False,
         "visual_prompt_inject": False,
         "visual_brand_overlay": False,
         "visual_stego": False,
@@ -69,9 +72,9 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_dsp_cloak": True,
         "audio_psycho_post": True,
         "audio_formant_suppress": False,
-        "visual_overlay": True,
-        "visual_prompt_inject": True,
-        "visual_brand_overlay": True,
+        "visual_overlay": False,
+        "visual_prompt_inject": False,
+        "visual_brand_overlay": False,
         "visual_stego": False,
         "visual_surrogate": False,
         "visual_keyframes_only": False,
@@ -92,12 +95,12 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_dsp_cloak": False,
         "audio_psycho_post": True,
         "audio_formant_suppress": True,
-        "visual_overlay": True,
-        "visual_prompt_inject": True,
-        "visual_brand_overlay": True,
-        "visual_stego": True,
+        "visual_overlay": False,
+        "visual_prompt_inject": False,
+        "visual_brand_overlay": False,
+        "visual_stego": False,
         "visual_surrogate": False,
-        "visual_keyframes_only": True,
+        "visual_keyframes_only": False,
         "track_srt": True,
         "track_metadata": True,
     },
@@ -125,10 +128,10 @@ PROFILES: dict[str, dict[str, bool]] = {
 }
 
 
-# Default prompt-injection visual mode per profile when CloakOptions
-# leaves ``prompt_inject_strength="auto"``. ``"none"`` disables it even if
-# the boolean flag in PROFILES is True (kept consistent with how a user might
-# toggle the flag manually).
+# Modo de prompt-injection no vídeo quando ``visual_prompt_inject`` está ligado
+# (tipicamente ``paranoid``). Nos presets produto não há camada visual em pixels.
+# Com ``prompt_inject_strength="auto"`` usa-se o default abaixo; ``"none"`` força
+# desligar mesmo que a flag em PROFILES seja True.
 _PROMPT_INJECT_DEFAULTS: dict[str, str] = {
     "minimal": "none",
     "standard": "soft",
