@@ -36,8 +36,8 @@ from .targets import TopicTarget, get_target
 
 
 PROFILES: dict[str, dict[str, bool]] = {
-    # Presets minimal/standard/aggressive = áudio-first: sem re-encode de vídeo
-    # por drawtext/stego/patch (rápido). SRT + metadata seguem ativos.
+    # Presets produto: foco em áudio; sem overlay/stego/patch pesados. Médio e
+    # forte usam prompt-injection visual soft (1 passe). SRT + metadata ativos.
     # Perfil paranoid mantém o stack visual completo (CLI / casos especiais).
     "minimal": {
         "audio_tts": False,
@@ -73,7 +73,7 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_psycho_post": True,
         "audio_formant_suppress": False,
         "visual_overlay": False,
-        "visual_prompt_inject": False,
+        "visual_prompt_inject": True,
         "visual_brand_overlay": False,
         "visual_stego": False,
         "visual_surrogate": False,
@@ -93,10 +93,10 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_mel_budget": False,
         "audio_more_length": False,
         "audio_dsp_cloak": False,
-        "audio_psycho_post": False,
-        "audio_formant_suppress": True,
+        "audio_psycho_post": True,
+        "audio_formant_suppress": False,
         "visual_overlay": False,
-        "visual_prompt_inject": False,
+        "visual_prompt_inject": True,
         "visual_brand_overlay": False,
         "visual_stego": False,
         "visual_surrogate": False,
@@ -128,14 +128,14 @@ PROFILES: dict[str, dict[str, bool]] = {
 }
 
 
-# Modo de prompt-injection no vídeo quando ``visual_prompt_inject`` está ligado
-# (tipicamente ``paranoid``). Nos presets produto não há camada visual em pixels.
+# Modo de prompt-injection no vídeo quando ``visual_prompt_inject`` está ligado.
+# standard/aggressive usam ``soft`` por padrão (quase invisível para humanos).
 # Com ``prompt_inject_strength="auto"`` usa-se o default abaixo; ``"none"`` força
 # desligar mesmo que a flag em PROFILES seja True.
 _PROMPT_INJECT_DEFAULTS: dict[str, str] = {
     "minimal": "none",
     "standard": "soft",
-    "aggressive": "hard",
+    "aggressive": "soft",
     "paranoid": "hard",
 }
 
@@ -148,7 +148,8 @@ _PROMPT_INJECT_DEFAULTS: dict[str, str] = {
 _AUDIO_SWAP_DEFAULTS: dict[str, str] = {
     "minimal": "underlay",
     "standard": "underlay",
-    "aggressive": "full",
+    # intro/outro: ASR forte nas pontas; meio com underlay — mais natural que ``full``.
+    "aggressive": "intro_outro",
     "paranoid": "full",
 }
 _AUDIO_SWAP_MODES = ("underlay", "intro_outro", "full")
@@ -232,10 +233,11 @@ def _profile_audio_tuning(profile: str, opts: CloakOptions) -> CloakOptions:
     if profile == "aggressive":
         return replace(
             opts,
-            whisper_iters=min(80, opts.whisper_iters),
+            whisper_iters=min(420, opts.whisper_iters),
             whisper_epsilon=max(opts.whisper_epsilon, 0.006),
-            whisper_model="tiny",
+            whisper_model="base",
             injection_bed_dbfs=-40.0,
+            tts_speech_rate=170,
         )
     return opts
 
@@ -435,7 +437,11 @@ def _audio_layer(
             length_explosion=more_on,
             length_factor=opts.more_length_factor,
             length_alpha=opts.more_length_alpha,
-            progress_callback=lambda s, n, l: _log(result, f"  whisper step {s}/{n} loss={l:.3f}") if s % 250 == 0 else None,
+            progress_callback=lambda s, n, l: _log(
+                result, f"  whisper step {s}/{n} loss={l:.3f}",
+            )
+            if (s % 100 == 0 or s + 1 >= n)
+            else None,
         )
         result.metrics["whisper_attack_decoded"] = attack.decoded_text
         result.metrics["whisper_attack_loss"] = attack.final_loss
@@ -710,7 +716,11 @@ def _track_layer(
 
 
 def _overlay_opts_for_profile(profile: str, base: CloakOptions) -> CloakOptions:
-    """Stronger visual modes on heavier profiles (Gemini weights OCR heavily)."""
+    """Modos de text_overlay (só aplicam se ``visual_overlay`` estiver ligado).
+
+    No produto, médio/forte não usam banner — a força visual é
+    ``visual_prompt_inject`` em modo soft.
+    """
     if profile == "minimal":
         return replace(
             base,
@@ -726,8 +736,8 @@ def _overlay_opts_for_profile(profile: str, base: CloakOptions) -> CloakOptions:
     if profile == "aggressive":
         return replace(
             base,
-            overlay_mode="visible",
-            overlay_font_size=max(base.overlay_font_size, 28),
+            overlay_mode="subtle",
+            overlay_font_size=max(base.overlay_font_size, 22),
         )
     if profile == "paranoid":
         return replace(
