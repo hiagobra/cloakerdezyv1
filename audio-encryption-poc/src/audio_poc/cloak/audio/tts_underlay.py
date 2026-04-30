@@ -13,6 +13,7 @@ Pipeline:
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -65,8 +66,15 @@ def synthesize_tts(
     out = Path(dst_wav)
     out.parent.mkdir(parents=True, exist_ok=True)
     engine.save_to_file(text, str(out))
-    engine.runAndWait()
-    engine.stop()
+    t = threading.Thread(target=engine.runAndWait, daemon=True)
+    t.start()
+    t.join(timeout=45)
+    try:
+        engine.stop()
+    except Exception:
+        pass
+    if t.is_alive():
+        raise RuntimeError("TTS timeout (45s). Verifique se espeak-ng está instalado na VPS.")
     if not out.exists() or out.stat().st_size < 1024:
         raise RuntimeError("TTS gerou arquivo vazio. Verifique pyttsx3/voices instaladas.")
     return out

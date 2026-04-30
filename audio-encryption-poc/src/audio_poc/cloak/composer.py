@@ -93,7 +93,7 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_mel_budget": False,
         "audio_more_length": False,
         "audio_dsp_cloak": False,
-        "audio_psycho_post": True,
+        "audio_psycho_post": False,
         "audio_formant_suppress": True,
         "visual_overlay": False,
         "visual_prompt_inject": False,
@@ -232,8 +232,9 @@ def _profile_audio_tuning(profile: str, opts: CloakOptions) -> CloakOptions:
     if profile == "aggressive":
         return replace(
             opts,
-            whisper_iters=min(420, opts.whisper_iters),
+            whisper_iters=min(80, opts.whisper_iters),
             whisper_epsilon=max(opts.whisper_epsilon, 0.006),
+            whisper_model="tiny",
             injection_bed_dbfs=-40.0,
         )
     return opts
