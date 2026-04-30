@@ -221,7 +221,7 @@ def _profile_audio_tuning(profile: str, opts: CloakOptions) -> CloakOptions:
         return replace(
             opts,
             underlay_target_dbfs=-24.0,
-            duck_db=-3.0,
+            underlay_duck_db=-3.0,
             injection_bed_dbfs=-44.0,
             dsp_cloak_preset="cloak_subtle",
             tts_speech_rate=168,
