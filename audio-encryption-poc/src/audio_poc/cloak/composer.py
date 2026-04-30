@@ -94,9 +94,9 @@ PROFILES: dict[str, dict[str, bool]] = {
         "audio_more_length": False,
         "audio_dsp_cloak": False,
         "audio_psycho_post": True,
-        "audio_formant_suppress": False,
+        "audio_formant_suppress": True,
         "visual_overlay": False,
-        "visual_prompt_inject": True,
+        "visual_prompt_inject": False,
         "visual_brand_overlay": False,
         "visual_stego": False,
         "visual_surrogate": False,
@@ -148,8 +148,7 @@ _PROMPT_INJECT_DEFAULTS: dict[str, str] = {
 _AUDIO_SWAP_DEFAULTS: dict[str, str] = {
     "minimal": "underlay",
     "standard": "underlay",
-    # intro/outro: ASR forte nas pontas; meio com underlay — mais natural que ``full``.
-    "aggressive": "intro_outro",
+    "aggressive": "underlay",
     "paranoid": "full",
 }
 _AUDIO_SWAP_MODES = ("underlay", "intro_outro", "full")
@@ -233,10 +232,12 @@ def _profile_audio_tuning(profile: str, opts: CloakOptions) -> CloakOptions:
     if profile == "aggressive":
         return replace(
             opts,
-            whisper_iters=min(420, opts.whisper_iters),
+            whisper_iters=min(80, opts.whisper_iters),
             whisper_epsilon=max(opts.whisper_epsilon, 0.006),
-            whisper_model="base",
-            injection_bed_dbfs=-40.0,
+            whisper_model="tiny",
+            injection_bed_dbfs=-46.0,
+            underlay_target_dbfs=-30.0,
+            underlay_duck_db=0.0,
             tts_speech_rate=170,
         )
     return opts
