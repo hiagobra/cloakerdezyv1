@@ -127,3 +127,39 @@ drop policy if exists "admins_view_allowlist" on public.profiles;
 -- Operacoes administrativas (ver todos / atualizar status) sao feitas pelo
 -- backend usando a Service Role Key, que ja bypass RLS. Por isso nao criamos
 -- policy de admin aqui - mantemos a tabela 100% protegida para clientes.
+
+-- ============================================================
+-- camouflage_logs: registro de cada camuflagem concluida.
+-- A camuflagem roda 100% no browser; o cliente reporta cada sucesso aqui
+-- para alimentar a metrica de total processado no painel admin.
+-- ============================================================
+
+create table if not exists public.camouflage_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users (id) on delete set null,
+  type text not null check (type in ('video', 'audio', 'image', 'metadata')),
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists camouflage_logs_user_idx on public.camouflage_logs (user_id);
+create index if not exists camouflage_logs_created_idx on public.camouflage_logs (created_at);
+create index if not exists camouflage_logs_type_idx on public.camouflage_logs (type);
+
+alter table public.camouflage_logs enable row level security;
+
+drop policy if exists "users_insert_own_logs" on public.camouflage_logs;
+create policy "users_insert_own_logs"
+on public.camouflage_logs
+for insert
+to authenticated
+with check ((select auth.uid()) = user_id);
+
+drop policy if exists "users_view_own_logs" on public.camouflage_logs;
+create policy "users_view_own_logs"
+on public.camouflage_logs
+for select
+to authenticated
+using ((select auth.uid()) = user_id);
+
+-- Leitura agregada (total da plataforma) e feita pelo backend com Service Role,
+-- que bypassa RLS - nao expomos contagem global para clientes.

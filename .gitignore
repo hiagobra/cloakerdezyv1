@@ -49,3 +49,6 @@ audio-encryption-poc/web-demo/outputs/
 
 # runtime job storage
 .runtime-storage/
+
+# reference SaaS (não faz parte do app, usado só como referência local)
+camouflageads-master/
