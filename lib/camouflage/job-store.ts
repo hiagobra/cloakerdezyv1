@@ -49,7 +49,7 @@ export type CamouflageJob = {
 };
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
-const defaultStorage = path.join(os.tmpdir(), "cloakerdezy-storage");
+const defaultStorage = path.join(os.tmpdir(), "camuflador-zetsu-storage");
 
 export function getStorageRoot(): string {
   return process.env.CAMOUFLAGE_STORAGE_DIR ?? defaultStorage;

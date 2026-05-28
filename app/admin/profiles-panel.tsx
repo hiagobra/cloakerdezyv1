@@ -99,11 +99,11 @@ export function AdminProfilesPanel({ initialRows }: { initialRows: ProfileRow[] 
   }
 
   return (
-    <section className="glass-panel overflow-hidden rounded-2xl">
-      <div className="flex flex-col gap-3 border-b border-border-soft/80 px-5 py-4 md:flex-row md:items-center md:justify-between">
+    <section className="surface-panel overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-border-soft px-5 py-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="font-semibold">Cadastros</h2>
-          <p className="text-xs text-muted">Aprove ou recuse os usuarios para liberar o acesso.</p>
+          <h2 className="text-display-tight text-lg text-foreground">Cadastros</h2>
+          <p className="text-xs text-muted">Aprove ou recuse os usuários para liberar o acesso.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {(
@@ -118,10 +118,10 @@ export function AdminProfilesPanel({ initialRows }: { initialRows: ProfileRow[] 
               key={option.id}
               type="button"
               onClick={() => setFilter(option.id)}
-              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+              className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
                 filter === option.id
-                  ? "border-primary bg-primary/15 text-primary"
-                  : "border-border-soft hover:border-primary/60"
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border-soft text-muted hover:border-border-strong hover:text-foreground"
               }`}
             >
               {option.label}
@@ -131,7 +131,7 @@ export function AdminProfilesPanel({ initialRows }: { initialRows: ProfileRow[] 
       </div>
 
       {feedback ? (
-        <p className="border-b border-border-soft/70 bg-card-soft/40 px-5 py-3 text-xs text-muted">{feedback}</p>
+        <p className="border-b border-border-soft bg-card-soft px-5 py-3 text-xs text-muted-strong">{feedback}</p>
       ) : null}
 
       {filtered.length === 0 ? (
@@ -139,15 +139,15 @@ export function AdminProfilesPanel({ initialRows }: { initialRows: ProfileRow[] 
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full border-collapse text-sm">
-            <thead className="bg-card-soft/80">
+            <thead className="bg-card-soft">
               <tr>
-                <th className="px-5 py-3 text-left font-medium text-muted">Email</th>
-                <th className="px-5 py-3 text-left font-medium text-muted">Telefone</th>
-                <th className="px-5 py-3 text-left font-medium text-muted">Status</th>
-                <th className="px-5 py-3 text-left font-medium text-muted">Criado em</th>
-                <th className="px-5 py-3 text-left font-medium text-muted">Aprovado em</th>
-                <th className="px-5 py-3 text-left font-medium text-muted">Ultimo acesso</th>
-                <th className="px-5 py-3 text-left font-medium text-muted">Acao</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-[0.14em] text-muted">Email</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-[0.14em] text-muted">Telefone</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-[0.14em] text-muted">Status</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-[0.14em] text-muted">Criado em</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-[0.14em] text-muted">Aprovado em</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-[0.14em] text-muted">Último acesso</th>
+                <th className="px-5 py-3 text-left text-xs font-medium uppercase tracking-[0.14em] text-muted">Ação</th>
               </tr>
             </thead>
             <tbody>
@@ -155,9 +155,9 @@ export function AdminProfilesPanel({ initialRows }: { initialRows: ProfileRow[] 
                 const status = statusLabel(row.status);
                 const busy = pendingId === row.id || isPending;
                 return (
-                  <tr key={row.id} className="border-t border-border-soft/70">
-                    <td className="px-5 py-3 font-medium">{row.email || row.id}</td>
-                    <td className="px-5 py-3">{row.phone || "-"}</td>
+                  <tr key={row.id} className="border-t border-border-soft transition-colors hover:bg-card-soft/40">
+                    <td className="px-5 py-3 font-medium text-foreground">{row.email || row.id}</td>
+                    <td className="px-5 py-3 text-muted-strong">{row.phone || "-"}</td>
                     <td className="px-5 py-3">
                       <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${status.className}`}>
                         {status.label}
@@ -172,7 +172,7 @@ export function AdminProfilesPanel({ initialRows }: { initialRows: ProfileRow[] 
                           type="button"
                           onClick={() => applyAction(row.id, "approve")}
                           disabled={busy || row.status === "approved"}
-                          className="rounded-lg border border-emerald-400/60 px-3 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="rounded-full bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Aprovar
                         </button>
@@ -180,7 +180,7 @@ export function AdminProfilesPanel({ initialRows }: { initialRows: ProfileRow[] 
                           type="button"
                           onClick={() => applyAction(row.id, "reject")}
                           disabled={busy || row.status === "rejected"}
-                          className="rounded-lg border border-red-400/60 px-3 py-2 text-xs font-semibold text-red-200 transition hover:bg-red-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="rounded-full border border-red-500/40 px-3 py-2 text-xs font-medium text-red-300 transition hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Recusar
                         </button>

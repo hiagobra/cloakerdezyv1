@@ -1,8 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AppHeader } from "@/components/app/app-header";
+import { Button } from "@/components/ui/button";
 
 type CamouflagePreset = "leve" | "medio" | "forte";
 type VideoStatus = "local" | "queued" | "processing" | "done" | "error";
@@ -326,54 +327,38 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="dezy-bg min-h-screen p-4 md:p-8">
-      <section className="mx-auto max-w-7xl">
-        <header className="glass-panel mb-8 flex flex-col gap-5 rounded-3xl p-6 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-4">
-            <Image
-              src="/brand/logo.png"
-              alt="CloakerDezy"
-              width={56}
-              height={56}
-              className="rounded-full border border-[rgba(157,107,255,0.45)]"
-            />
-            <div>
-              <h1 className="text-2xl font-semibold">Dashboard de Videos</h1>
-              <p className="text-sm text-muted">
-                Upload rapido, fila de processamento e camuflagem em um lugar.
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={signOut}
-            className="rounded-xl border border-primary/70 px-4 py-2 text-sm font-semibold transition hover:bg-primary/15"
-          >
-            Sair
-          </button>
-        </header>
+    <main className="zetsu-bg relative min-h-screen p-4 md:p-8">
+      <section className="relative z-10 mx-auto max-w-7xl">
+        <AppHeader
+          title="Dashboard de vídeos"
+          subtitle="Upload rápido, fila de processamento e camuflagem em um lugar."
+          actions={
+            <Button type="button" onClick={signOut} variant="outline" size="sm">
+              Sair
+            </Button>
+          }
+        />
 
         <section className="mb-6 grid gap-4 md:grid-cols-3">
-          <article className="glass-panel rounded-2xl p-5">
-            <p className="text-sm text-muted">Videos na fila</p>
-            <p className="mt-2 text-4xl font-semibold text-primary">{totals.total}</p>
+          <article className="surface-panel p-5">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted">Vídeos na fila</p>
+            <p className="text-display mt-2 text-5xl text-foreground">{totals.total}</p>
           </article>
-          <article className="glass-panel rounded-2xl p-5">
-            <p className="text-sm text-muted">Processando</p>
-            <p className="mt-2 text-4xl font-semibold text-primary">{totals.processing}</p>
+          <article className="surface-panel p-5">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted">Processando</p>
+            <p className="text-display mt-2 text-5xl text-primary">{totals.processing}</p>
           </article>
-          <article className="glass-panel rounded-2xl p-5">
-            <p className="text-sm text-muted">Camuflados</p>
-            <p className="mt-2 text-4xl font-semibold text-primary">{totals.done}</p>
+          <article className="surface-panel p-5">
+            <p className="text-xs uppercase tracking-[0.18em] text-muted">Camuflados</p>
+            <p className="text-display mt-2 text-5xl text-primary">{totals.done}</p>
           </article>
         </section>
 
-        <section className="glass-panel mb-6 rounded-2xl p-5">
+        <section className="surface-panel mb-6 p-5">
           <div className="mb-3 flex items-center justify-between gap-4">
-            <h2 className="font-semibold">Upload de videos</h2>
-            <label className="cursor-pointer rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-[#100b23] transition hover:bg-primary-strong">
-              Selecionar videos
+            <h2 className="text-display-tight text-lg text-foreground">Upload de vídeos</h2>
+            <label className="cursor-pointer rounded-full bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary-strong shadow-[0_8px_24px_-8px_rgba(168,255,0,0.5)]">
+              Selecionar vídeos
               <input
                 type="file"
                 accept="video/*"
@@ -383,23 +368,23 @@ export default function DashboardPage() {
               />
             </label>
           </div>
-          <p className="text-sm text-muted">
-            Formatos aceitos: qualquer formato de video reconhecido pelo navegador.
+          <p className="text-sm text-muted-strong">
+            Formatos aceitos: qualquer formato de vídeo reconhecido pelo navegador.
           </p>
           {feedback ? (
-            <p className="mt-4 rounded-xl border border-emerald-400/40 bg-emerald-950/25 px-4 py-3 text-sm text-emerald-200">
+            <p className="mt-4 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
               {feedback}
             </p>
           ) : null}
         </section>
 
-        <section className="glass-panel overflow-hidden rounded-2xl">
-          <div className="border-b border-border-soft/80 px-5 py-4">
-            <h2 className="font-semibold">Fila de camuflagem</h2>
-            <p className="mt-2 text-xs text-muted">
-              <span className="font-semibold text-foreground">Leve</span>: overlay visual + SRT do alvo, audio original mantido.{" "}
-              <span className="font-semibold text-foreground">Medio</span>: TTS do topico-alvo misturado em volume baixo no audio original.{" "}
-              <span className="font-semibold text-foreground">Forte</span>: TTS do alvo passa a dominar a faixa de audio (voz original abafada a -32 dBFS) e ataques adversariais reforcados. Humanos ouvem a narracao do tema-alvo no lugar do audio original.
+        <section className="surface-panel overflow-hidden">
+          <div className="border-b border-border-soft px-5 py-4">
+            <h2 className="text-display-tight text-lg text-foreground">Fila de camuflagem</h2>
+            <p className="mt-2 text-xs text-muted-strong">
+              <span className="font-semibold text-foreground">Leve</span>: overlay visual + SRT do alvo, áudio original mantido.{" "}
+              <span className="font-semibold text-foreground">Médio</span>: TTS do tópico-alvo misturado em volume baixo no áudio original.{" "}
+              <span className="font-semibold text-foreground">Forte</span>: TTS do alvo passa a dominar a faixa de áudio (voz original abafada a -32 dBFS) e ataques adversariais reforçados. Humanos ouvem a narração do tema-alvo no lugar do áudio original.
             </p>
           </div>
 
