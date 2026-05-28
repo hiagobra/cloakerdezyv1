@@ -74,6 +74,20 @@ export default function DashboardPage() {
 
   return (
     <main className="zetsu-bg relative min-h-screen p-4 md:p-8">
+      {/* Fundo Gon (HxH) — sutil, mesclado com verde/preto */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div
+          className="absolute inset-0 bg-cover bg-center opacity-[0.28]"
+          style={{ backgroundImage: "url('/brand/wp6385328.jpg')" }}
+        />
+        {/* glow verde no topo */}
+        <div className="absolute inset-0 bg-[radial-gradient(900px_circle_at_50%_0%,rgba(168,255,0,0.12),transparent_60%)]" />
+        {/* vinheta escura nas bordas (foca o Gon + esconde a marca d'água do canto) */}
+        <div className="absolute inset-0 bg-[radial-gradient(125%_95%_at_50%_45%,transparent_28%,rgba(7,7,7,0.92)_100%)]" />
+        {/* fade pro preto embaixo, mantém os cards legíveis */}
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-background/35 to-background" />
+      </div>
+
       <section className="relative z-10 mx-auto max-w-5xl">
         <AppHeader
           title="Central de camuflagem"
