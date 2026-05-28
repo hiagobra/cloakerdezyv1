@@ -17,7 +17,13 @@ const spaceGrotesk = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: "Camuflador Zetsu",
-  description: "Camufle seus criativos no TikTok, Google e Facebook. Suprima sua presença, multiplique seus resultados.",
+  description:
+    "Camufle seus criativos no TikTok, Google e Facebook. Suprima sua presença, multiplique seus resultados.",
+  icons: {
+    icon: "/brand/logo-zetsu.png",
+    shortcut: "/brand/logo-zetsu.png",
+    apple: "/brand/logo-zetsu.png",
+  },
 };
 
 export default function RootLayout({
