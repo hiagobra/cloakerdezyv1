@@ -184,7 +184,16 @@ export async function camouflageVideo(
       let rejected = false;
       let rvfcId: number | null = null;
       let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+      let watchdog: ReturnType<typeof setInterval> | null = null;
       let frameCount = 0;
+      const noisePattern = ctx.createPattern(noiseTex, "repeat");
+
+      // Watchdog anti-travamento: se a reprodução parar de avançar (buffer,
+      // hiccup de decode, aba em background), tenta retomar; se ficar preso
+      // demais, finaliza com o que já foi gravado em vez de congelar pra sempre.
+      let lastTime = 0;
+      let lastAdvanceAt = Date.now();
+      let nudges = 0;
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.push(e.data);
@@ -222,17 +231,16 @@ export async function camouflageVideo(
         }
 
         // ruído esparso, deslocado a cada frame pra variação temporal
-        ctx.globalAlpha = params.noiseAlpha;
-        const ox = (frameCount * 37) % noiseTex.width;
-        const oy = (frameCount * 53) % noiseTex.height;
-        ctx.translate(-ox, -oy);
-        const pattern = ctx.createPattern(noiseTex, "repeat");
-        if (pattern) {
-          ctx.fillStyle = pattern;
+        if (noisePattern) {
+          ctx.globalAlpha = params.noiseAlpha;
+          const ox = (frameCount * 37) % noiseTex.width;
+          const oy = (frameCount * 53) % noiseTex.height;
+          ctx.translate(-ox, -oy);
+          ctx.fillStyle = noisePattern;
           ctx.fillRect(ox, oy, w, h);
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.globalAlpha = 1;
         }
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.globalAlpha = 1;
         frameCount++;
       };
 
@@ -249,6 +257,81 @@ export async function camouflageVideo(
           clearInterval(fallbackTimer);
           fallbackTimer = null;
         }
+        if (watchdog !== null) {
+          clearInterval(watchdog);
+          watchdog = null;
+        }
+      };
+
+      const resumePlayback = () => {
+        if (finished || video.ended) return;
+        const p = video.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      };
+
+      // Retoma a reprodução automaticamente se o vídeo pausar/bufferizar.
+      for (const ev of ["stalled", "waiting", "suspend", "pause"] as const) {
+        video.addEventListener(ev, () => {
+          if (!finished && !video.ended) resumePlayback();
+        });
+      }
+
+      const startWatchdog = () => {
+        lastTime = video.currentTime;
+        lastAdvanceAt = Date.now();
+        watchdog = setInterval(() => {
+          if (finished) return;
+          if (video.ended) return; // o handler "ended" finaliza
+
+          if (video.currentTime > lastTime + 0.01) {
+            lastTime = video.currentTime;
+            lastAdvanceAt = Date.now();
+            nudges = 0;
+            return;
+          }
+
+          const stuckMs = Date.now() - lastAdvanceAt;
+
+          // 1) primeiro tenta só retomar a reprodução
+          if (video.paused) resumePlayback();
+
+          // 2) travado >3s: empurra alguns frames pra frente pra pular o ponto ruim
+          if (stuckMs > 3000 && nudges < 40 && duration > 0 && video.currentTime < duration - 0.2) {
+            nudges++;
+            try {
+              video.currentTime = Math.min(duration - 0.05, video.currentTime + 0.1);
+            } catch {
+              /* ignore */
+            }
+            resumePlayback();
+          }
+
+          // 3) travado perto do fim: finaliza com o que tem (praticamente completo)
+          if (stuckMs > 5000 && duration > 0 && video.currentTime >= duration - 0.5) {
+            finalize();
+            return;
+          }
+
+          // 4) travado de vez no meio: aborta com erro claro em vez de entregar
+          //    um vídeo cortado pela metade (mantém a camuflagem íntegra).
+          if (stuckMs > 20000) {
+            finished = true;
+            rejected = true;
+            stopAll();
+            try {
+              video.pause();
+              if (recorder.state === "recording") recorder.stop();
+            } catch {
+              /* ignore */
+            }
+            cleanup();
+            reject(
+              new Error(
+                "O vídeo travou no processamento (possível problema de codec/decode). Tente de novo, use um vídeo menor ou converta pra MP4 antes.",
+              ),
+            );
+          }
+        }, 1000);
       };
 
       const finalize = () => {
@@ -315,6 +398,7 @@ export async function camouflageVideo(
       recorder.start(1000);
       if (hasRVFC(video)) runRvfc();
       else runFallback();
+      startWatchdog();
 
       video.play().catch(() => {
         rejected = true;
