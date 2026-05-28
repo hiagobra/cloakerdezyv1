@@ -74,14 +74,16 @@ export default function DashboardPage() {
 
   return (
     <main className="zetsu-bg relative min-h-screen p-4 md:p-8">
-      {/* Gon (HxH) no cantinho — bem sutil, dissolvendo no fundo. Só charme. */}
+      {/* Gon (HxH) na lateral direita — faixa vertical pega a tira central
+          (onde ele está) e dissolve pra esquerda no fundo. Só charme. */}
       <div
         aria-hidden
-        className="pointer-events-none fixed bottom-0 right-0 z-0 hidden h-[60vh] max-h-[600px] w-[50vw] max-w-[640px] bg-cover bg-center opacity-[0.16] md:block"
+        className="pointer-events-none fixed inset-y-0 right-0 z-0 hidden w-[40vw] max-w-[540px] bg-cover opacity-[0.20] md:block"
         style={{
           backgroundImage: "url('/brand/wp6385328.jpg')",
-          WebkitMaskImage: "radial-gradient(130% 130% at 100% 100%, #000 18%, transparent 70%)",
-          maskImage: "radial-gradient(130% 130% at 100% 100%, #000 18%, transparent 70%)",
+          backgroundPosition: "center 38%",
+          WebkitMaskImage: "linear-gradient(to left, #000 30%, transparent 90%)",
+          maskImage: "linear-gradient(to left, #000 30%, transparent 90%)",
         }}
       />
 
