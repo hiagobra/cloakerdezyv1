@@ -5,7 +5,7 @@ import { camouflageVideo, type VideoMode } from "@/lib/camouflage/client/video";
 import { protectVideoAudio, type AudioMode } from "@/lib/camouflage/client/audio";
 import { useCamouflageQueue } from "@/lib/camouflage/client/queue";
 import { trackCamouflage, useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
-import { CamoResult, CoverPicker, Dropzone, JobList, ModeSelector, SectionCard } from "./shared";
+import { CamoResult, CoverPicker, Dropzone, JobList, ModeSelector, SectionCard, WhiteCopyPicker } from "./shared";
 
 const MODES: { value: VideoMode; label: string; desc: string }[] = [
   { value: "leve", label: "Leve", desc: "Perturbação mínima, mais rápido." },
@@ -23,6 +23,7 @@ export function VideoSection() {
   const [cover, setCover] = useState<File | null>(null);
   const [protectAudio, setProtectAudio] = useState(true);
   const [audioMode, setAudioMode] = useState<AudioMode>("maximo");
+  const [whiteCopy, setWhiteCopy] = useState<File | null>(null);
   const queue = useCamouflageQueue<CamoResult>(3);
 
   useBeforeUnloadGuard(queue.activeCount > 0);
@@ -34,6 +35,7 @@ export function VideoSection() {
   const onFiles = (files: File[]) => {
     const videos = files.filter((f) => f.type.startsWith("video/") || /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(f.name));
     if (videos.length === 0) return;
+    const white = protectAudio ? whiteCopy : null;
     queue.enqueue(
       videos.map((file) => ({
         fileName: file.name,
@@ -46,6 +48,7 @@ export function VideoSection() {
             file,
             protectAudio ? audioMode : null,
             (m) => onProgress(`Áudio: ${m}`),
+            white,
           );
           return { blob: out.blob, outputName: out.outputName };
         },
@@ -80,8 +83,16 @@ export function VideoSection() {
           </button>
         </label>
         {protectAudio ? (
-          <div className="mt-3">
-            <ModeSelector value={audioMode} options={AUDIO_MODES} onChange={setAudioMode} />
+          <div className="mt-3 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <ModeSelector value={audioMode} options={AUDIO_MODES} onChange={setAudioMode} />
+              <WhiteCopyPicker file={whiteCopy} onPick={setWhiteCopy} onClear={() => setWhiteCopy(null)} />
+            </div>
+            {whiteCopy ? (
+              <p className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-strong">
+                Copia white ativa: a IA vai transcrever <strong className="text-foreground">{whiteCopy.name}</strong> no lugar do áudio real. Funciona melhor no modo <strong className="text-foreground">Máximo</strong>.
+              </p>
+            ) : null}
           </div>
         ) : null}
       </div>

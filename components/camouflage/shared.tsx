@@ -228,6 +228,44 @@ export function JobList({
 // Optional cover picker
 // ============================================================
 
+export function WhiteCopyPicker({ file, onPick, onClear }: { file: File | null; onPick: (f: File) => void; onClear: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        className="flex items-center gap-2 rounded-full border border-border-strong px-4 py-2 text-sm text-foreground transition hover:border-primary/50"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M12 1v22M8 5v14M4 9v6M16 5v14M20 9v6" />
+        </svg>
+        {file ? "Trocar copia white" : "Copia white (opcional)"}
+      </button>
+      {file ? (
+        <span className="flex items-center gap-2 text-xs text-muted">
+          <span className="max-w-[160px] truncate">{file.name}</span>
+          <button type="button" onClick={onClear} className="hover:text-foreground">
+            remover
+          </button>
+        </span>
+      ) : null}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="audio/*,video/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onPick(f);
+          e.target.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
 export function CoverPicker({ cover, onPick, onClear }: { cover: File | null; onPick: (f: File) => void; onClear: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);

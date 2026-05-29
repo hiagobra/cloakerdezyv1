@@ -88,6 +88,25 @@ UI da aba Vídeo: toggle **"Proteger áudio contra IA"** (default ligado, modo `
 
 **Consequência:** todo vídeo faz 2 passos (visual em tempo real + remux WASM). Mais lento, porém correto.
 
+## COPIA WHITE (técnica real do maskai — anti-transcrição que funciona)
+
+DSP sozinho (reverso/eco/notches) **não engana ASR moderno** (Gemini, AssemblyAi): a transcrição sai praticamente igual. O que o maskai faz de fato é **sobrepor uma fala diferente e LIMPA (“copia white”)** por cima do áudio real:
+
+- a **voz real** é degradada na banda de consoante (notches + compress) → fica difícil pra ASR, mas o humano segue pelo contexto;
+- a **copia white** (renda extra, prosperidade, emagrecimento… ou um arquivo do usuário) entra **limpa** na banda de voz (180–6500 Hz), nivelada ~3 dB abaixo da real;
+- a ASR, achando a voz real “suja” e a white “limpa”, **transcreve a white** → a transcrição sai coerente porém **errada** (não é o que está sendo falado). Sem white, só DSP, a ASR “ouve silêncio/ruído” e a plataforma **marca** o criativo.
+
+**Implementação (`renderAudioWav` com `whiteName`):**
+1. PASS 1 — voz real degradada (notches+compress forçados) → `cv_*.wav`.
+2. PASS W — white **loopada** pra cobrir a duração (`-stream_loop -1 -t <dur>`), band-limitada (`highpass=180,lowpass=6500`) e comprimida (`acompressor`) → `ch_*.wav`.
+3. nivelamento por medição: `gain = mean(voz) + WHITE_REL_DB(-3) − mean(white)`, clampado [-24, +18] dB.
+4. PASS MIX — `buildWhiteMixComplex`: `[voz][white·gain][ruído…]amix → alimiter`.
+5. fallbacks: white falhou → scrambler reverso; tudo falhou → voz limpa; nunca fica mudo.
+
+**UI:** `WhiteCopyPicker` (em `shared.tsx`) nas abas **Áudio** e **Vídeo** (dentro de “Proteger áudio contra IA”). Aceita áudio **ou vídeo** como fonte da copia. Aplicada a todos os arquivos da fila. Recomendado com modo **Máximo**.
+
+> Sem copia white o sistema cai no scrambler reverso (DSP), que embaralha mas **não garante** enganar ASR robusto — é esperado a transcrição às vezes sair parecida. A copia white é o que reproduz o resultado do maskai.
+
 ## Camuflagem de IMAGEM e METADADOS
 
 - **Imagem** (`image.ts`): canvas, blend capa/criativo (slider 0-20 → gamma) + ruído adversarial checkerboard 2x2 + pixel randomization + shift de contraste/brilho. PRNG xorshift.

@@ -313,6 +313,43 @@ function scramblerAf(cfg: ModeCfg): string {
   return `areverse,aecho=in_gain=1:out_gain=0.6:delays=80|160:decays=0.4|0.25,highpass=f=300,lowpass=f=3400,volume=${cfg.scramblerDb}dB`;
 }
 
+// Nível da copia white relativo à voz principal (dB). A white fica logo abaixo
+// da voz pro humano focar na real, mas como a voz vai NOTCHADA na banda de
+// consoante e a white entra LIMPA, a ASR trava na white (transcreve ela).
+const WHITE_REL_DB = -3;
+
+/**
+ * Mix do `maximo` com COPIA WHITE (técnica maskai): voz real degradada (input
+ * 0) + fala white limpa nivelada (input 1) + ruído (2..N). A ASR transcreve a
+ * white; o humano segue a voz real no foco.
+ */
+function buildWhiteMixComplex(cfg: ModeCfg, whiteGainDb: number): { complex: string; needsPink: boolean; needsBrown: boolean; needsHf: boolean } {
+  const usePink = cfg.pinkDb > -99;
+  const useBrown = cfg.brownDb > -99;
+  const useHf = cfg.hfDb > -99;
+  const parts: string[] = [`[1:a]volume=${whiteGainDb.toFixed(2)}dB[wht]`];
+  const labels: string[] = ["[0:a]", "[wht]"];
+  let idx = 2;
+  if (usePink) {
+    parts.push(`[${idx}:a]volume=${cfg.pinkDb}dB[nzP]`);
+    labels.push("[nzP]");
+    idx++;
+  }
+  if (useBrown) {
+    parts.push(`[${idx}:a]volume=${cfg.brownDb}dB[nzB]`);
+    labels.push("[nzB]");
+    idx++;
+  }
+  if (useHf) {
+    parts.push(`[${idx}:a]highpass=f=14000,lowpass=f=18000,volume=${cfg.hfDb}dB[nzH]`);
+    labels.push("[nzH]");
+    idx++;
+  }
+  parts.push(`${labels.join("")}amix=inputs=${labels.length}:duration=first:normalize=0[premix]`);
+  parts.push(`[premix]alimiter=level_in=1:level_out=1:limit=0.95[out]`);
+  return { complex: parts.join(";"), needsPink: usePink, needsBrown: useBrown, needsHf: useHf };
+}
+
 /**
  * Mix final do `maximo`: voz (input 0) + scrambler (input 1) + ruído (inputs
  * 2..N, finitos). Como TODOS são arquivos/streams finitos, o `amix` nunca
@@ -359,11 +396,13 @@ async function renderAudioWav(
   mode: AudioMode,
   duration: number,
   id: string,
+  whiteName: string | null = null,
 ): Promise<string> {
   const cfg = effectiveCfg(MODES[mode], duration);
+  const hasWhite = !!whiteName;
 
-  // ---- caso sem scrambler (leve, ou maximo longo com areverse desativado) ----
-  if (cfg.scramblerDb === null) {
+  // ---- caso simples: sem scrambler E sem white (leve) → passe único ----
+  if (cfg.scramblerDb === null && !hasWhite) {
     const outWav = `cw_${id}.wav`;
     const graph = buildGraph(cfg, duration, "[0:a]", 1);
     const inputs = ["-i", srcName];
@@ -378,18 +417,60 @@ async function renderAudioWav(
     return outWav;
   }
 
-  // ---- maximo: PASS 1 — voz processada (sempre tem som) ----
+  // ---- PASS 1 — voz processada (degradada pra ASR, sempre com som) ----
+  // Com white copy, força notches/compress (degrada a voz real pra ASR travar na white).
+  const voiceCfg: ModeCfg = hasWhite ? { ...cfg, notches: true, compress: true, monoBase: true } : cfg;
   const voiceWav = `cv_${id}.wav`;
-  const vcode = await ffmpeg.exec(["-i", srcName, "-filter_complex", buildVoiceComplex(cfg, duration), "-map", "[out]", "-c:a", "pcm_s16le", "-y", voiceWav]);
+  const vcode = await ffmpeg.exec(["-i", srcName, "-filter_complex", buildVoiceComplex(voiceCfg, duration), "-map", "[out]", "-c:a", "pcm_s16le", "-y", voiceWav]);
   if (vcode !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
   const vmean = await meanVolumeDb(ffmpeg, voiceWav);
   if (vmean !== null && vmean < SILENCE_FLOOR_DB) throw new Error("Voz processada ficou muda.");
 
-  // ---- PASS 2 (scrambler) + PASS 3 (mix). Se algo falhar/mudar → usa a voz limpa. ----
-  const scramWav = `cs_${id}.wav`;
   const outWav = `cw_${id}.wav`;
+
+  // ---- CAMINHO A: COPIA WHITE (técnica maskai) ----
+  if (hasWhite && whiteName) {
+    const whiteWav = `ch_${id}.wav`;
+    try {
+      // processa a white: loopa pra cobrir a duração, limita à banda de voz e nivela dinâmica
+      const loopIn = duration > 1 ? ["-stream_loop", "-1", "-i", whiteName, "-t", duration.toFixed(3)] : ["-i", whiteName];
+      const wcode = await ffmpeg.exec([
+        ...loopIn,
+        "-af", "aresample=48000,aformat=channel_layouts=mono,highpass=f=180,lowpass=f=6500,acompressor=threshold=-20dB:ratio=4:attack=10:release=180:makeup=4",
+        "-c:a", "pcm_s16le", "-y", whiteWav,
+      ]);
+      if (wcode !== 0) throw new Error("white falhou");
+
+      // nivela a white ~WHITE_REL_DB abaixo da voz (por medição de mean)
+      const mMean = (await meanVolumeDb(ffmpeg, voiceWav)) ?? -20;
+      const wMean = (await meanVolumeDb(ffmpeg, whiteWav)) ?? -20;
+      let gain = mMean + WHITE_REL_DB - wMean;
+      gain = Math.max(-24, Math.min(18, gain)); // clamp pra não estourar/sumir
+
+      const mix = buildWhiteMixComplex(cfg, gain);
+      const inputs = ["-i", voiceWav, "-i", whiteWav];
+      if (mix.needsPink) inputs.push(...lavfiInput("pink", duration));
+      if (mix.needsBrown) inputs.push(...lavfiInput("brown", duration));
+      if (mix.needsHf) inputs.push(...lavfiInput("pink", duration));
+      const mcode = await ffmpeg.exec([...inputs, "-filter_complex", mix.complex, "-map", "[out]", "-ac", "2", "-c:a", "pcm_s16le", "-y", outWav]);
+      if (mcode !== 0) throw new Error("mix white falhou");
+
+      const omean = await meanVolumeDb(ffmpeg, outWav);
+      if (omean !== null && omean < SILENCE_FLOOR_DB) throw new Error("mix white ficou mudo");
+
+      await Promise.allSettled([ffmpeg.deleteFile(whiteWav), ffmpeg.deleteFile(voiceWav)]);
+      return outWav;
+    } catch {
+      // white falhou → cai pro scrambler reverso abaixo (ainda anti-IA), sem perder o som
+      await Promise.allSettled([ffmpeg.deleteFile(whiteWav)]);
+    }
+  }
+
+  // ---- CAMINHO B: scrambler reverso+eco (quando não há white, ou white falhou) ----
+  const scramWav = `cs_${id}.wav`;
   try {
-    const scode = await ffmpeg.exec(["-i", voiceWav, "-af", scramblerAf(cfg), "-c:a", "pcm_s16le", "-y", scramWav]);
+    const scrCfg = cfg.scramblerDb === null ? { ...cfg, scramblerDb: -8 } : cfg;
+    const scode = await ffmpeg.exec(["-i", voiceWav, "-af", scramblerAf(scrCfg), "-c:a", "pcm_s16le", "-y", scramWav]);
     if (scode !== 0) throw new Error("scrambler falhou");
 
     const mix = buildMixComplex(cfg);
@@ -421,6 +502,7 @@ export async function camouflageAudio(
   file: File,
   mode: AudioMode = "leve",
   onProgress?: (msg: string) => void,
+  whiteCopy?: File | null,
 ): Promise<AudioCamouflageResult> {
   if (file.size > MAX_BYTES) {
     throw new Error("Arquivo muito grande para processar no navegador (máx 150MB).");
@@ -433,6 +515,7 @@ export async function camouflageAudio(
   const outputExt = isVideo ? inputExt : ".mp3";
   const id = nextFileId();
   const inputName = `in_${id}${inputExt}`;
+  const whiteName = whiteCopy ? `wc_${id}${getExtension(whiteCopy.name)}` : null;
   const outputFile = `out_${id}${outputExt}`;
   const outputName = `${file.name.replace(/\.[^.]+$/, "")}_camuflado${outputExt}`;
   // webm mantém libopus; mp4/mov usam aac
@@ -444,20 +527,22 @@ export async function camouflageAudio(
   // Tudo que toca o FFmpeg roda serializado (uma instância single-thread só).
   return runExclusive(async () => {
     await ffmpeg.writeFile(inputName, await fetchFile(file));
+    if (whiteCopy && whiteName) await ffmpeg.writeFile(whiteName, await fetchFile(whiteCopy));
     let procWav: string | null = null;
     const cleanup = () =>
       Promise.allSettled([
         ffmpeg.deleteFile(inputName),
         ffmpeg.deleteFile(outputFile),
+        ...(whiteName ? [ffmpeg.deleteFile(whiteName)] : []),
         ...(procWav ? [ffmpeg.deleteFile(procWav)] : []),
       ]);
 
     // ---- tentativa principal: camuflagem em passes (robusta no WASM) ----
     try {
       clearFfmpegLog();
-      onProgress?.(mode === "maximo" ? "Camuflando áudio (anti-IA)..." : "Camuflando áudio...");
+      onProgress?.(whiteName ? "Aplicando copia white (anti-IA)..." : mode === "maximo" ? "Camuflando áudio (anti-IA)..." : "Camuflando áudio...");
 
-      procWav = await renderAudioWav(ffmpeg, inputName, mode, duration, id);
+      procWav = await renderAudioWav(ffmpeg, inputName, mode, duration, id, whiteName);
 
       onProgress?.("Finalizando...");
       clearFfmpegLog();
@@ -523,6 +608,7 @@ export async function protectVideoAudio(
   original: File,
   mode: AudioMode | null,
   onProgress?: (msg: string) => void,
+  whiteCopy?: File | null,
 ): Promise<{ blob: Blob; outputName: string }> {
   const ffmpeg = await loadFFmpeg(onProgress);
   const isWebm = /webm/i.test(videoBlob.type);
@@ -531,6 +617,7 @@ export async function protectVideoAudio(
   const id = nextFileId();
   const vName = `cam_${id}${vExt}`;
   const aName = `orig_${id}${getExtension(original.name)}`;
+  const whiteName = whiteCopy ? `wc_${id}${getExtension(whiteCopy.name)}` : null;
   const outName = `final_${id}${vExt}`;
   const base = original.name.replace(/\.[^.]+$/, "");
   const outputName = `${base}_camuflado${vExt}`;
@@ -542,12 +629,14 @@ export async function protectVideoAudio(
   return runExclusive(async () => {
     await ffmpeg.writeFile(vName, await fetchFile(videoBlob));
     await ffmpeg.writeFile(aName, await fetchFile(original));
+    if (whiteCopy && whiteName) await ffmpeg.writeFile(whiteName, await fetchFile(whiteCopy));
 
     const cleanup = () =>
       Promise.allSettled([
         ffmpeg.deleteFile(vName),
         ffmpeg.deleteFile(aName),
         ffmpeg.deleteFile(outName),
+        ...(whiteName ? [ffmpeg.deleteFile(whiteName)] : []),
         ...(renderedWav ? [ffmpeg.deleteFile(renderedWav)] : []),
       ]);
 
@@ -563,9 +652,9 @@ export async function protectVideoAudio(
     let audioSource = aName;
     if (mode !== null) {
       try {
-        onProgress?.(mode === "maximo" ? "Protegendo áudio (anti-IA)..." : "Protegendo áudio...");
+        onProgress?.(whiteName ? "Aplicando copia white (anti-IA)..." : mode === "maximo" ? "Protegendo áudio (anti-IA)..." : "Protegendo áudio...");
         clearFfmpegLog();
-        renderedWav = await renderAudioWav(ffmpeg, aName, mode, duration, id);
+        renderedWav = await renderAudioWav(ffmpeg, aName, mode, duration, id, whiteName);
         audioSource = renderedWav; // anti-IA OK (renderAudioWav nunca devolve mudo)
       } catch {
         audioSource = aName; // qualquer falha → usa o áudio original (nunca fica mudo)
