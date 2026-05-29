@@ -16,7 +16,7 @@ Objetivo central: **imperceptível pro humano, mas embaralha a impressão digita
 
 | Arquivo | Papel |
 |---|---|
-| `lib/camouflage/client/ffmpeg.ts` | Loader singleton do FFmpeg WASM, `parseFFmpegError`, `getFfmpegLog`/`clearFfmpegLog`, `preloadFFmpeg` |
+| `lib/camouflage/client/ffmpeg.ts` | Loader singleton do FFmpeg WASM, `parseFFmpegError`, `getFfmpegLog`/`clearFfmpegLog`, `preloadFFmpeg`, **`runExclusive` (mutex)** e **`nextFileId`** (nomes únicos) |
 | `lib/camouflage/client/audio.ts` | `camouflageAudio(file, mode, onProgress)` + `protectVideoAudio(videoBlob, original, mode, onProgress)`. Modos `leve`/`maximo`. `buildGraph()` parametrizável |
 | `lib/camouflage/client/video.ts` | `camouflageVideo(file, {mode, cover, onProgress})`. Canvas+MediaRecorder, **vídeo-only** (sem captura de áudio), watchdog anti-travamento. Modos `leve`/`medio`/`forte` |
 | `lib/camouflage/client/image.ts` | `camouflageImage()` blend capa/criativo + ruído adversarial + contraste |
@@ -43,11 +43,15 @@ Faz a transcrição automática falhar mantendo a voz audível pro humano:
 - `monoBase: true`, `jitter: 0.4`, `pitchPercent: 1.0`, `notches: true`, `scramblerDb: -8`, `compress: true`
 - `pinkDb: -48`, `brownDb: -52`, `hfDb: -44`, `launder: 0.2`, `stereoOut: true`
 
-**Gain-staging (fix do bug "som não sai" no maximo):** antes o `aecho out_gain=0.85` somado à voz em volume cheio **saturava** e a saída ficava distorcida/zerada. Agora:
-1. a voz passa por `acompressor` (densa, dominante no mix);
-2. o scrambler entra ~8 dB ABAIXO (`out_gain=0.6`, `volume=-8dB`);
-3. a cadeia termina num `alimiter=limit=0.9` que barra os picos do eco;
-4. **trava de silêncio em runtime** (`meanVolumeDb` via `volumedetect`): se a saída sair com `mean_volume < -50 dB`, dispara o fallback automaticamente. Vale pra `camouflageAudio` e `protectVideoAudio`.
+**Fix definitivo do "som não sai" no maximo — processamento em PASSES (`renderAudioWav`):** o grafo único antigo misturava num só `amix` a voz (streaming), o `areverse` (que só emite no EOF) e fontes de ruído. No WASM isso fazia o `amix` **descartar a voz** e sobrar só o ruído baixo (≈ -48 dB) = "sem áudio" — e passava pela trava antiga. Agora o `maximo` roda em 3 passes com arquivos intermediários:
+1. **PASS 1 — voz** (`buildVoiceComplex`): mono → jitter → declick → pitch → launder → notches → `acompressor`. Streaming puro, **sempre tem som**. Vira `cv_*.wav`.
+2. **PASS 2 — scrambler** (`scramblerAf` num `-af` sobre o WAV da voz): `areverse,aecho=out_gain=0.6,…,volume=-8dB`. Pré-renderizado num arquivo (`cs_*.wav`), então some o problema do `areverse` "atrasado" dentro do `amix`.
+3. **PASS 3 — mix** (`buildMixComplex`): `amix` de voz + scrambler + ruído (TODOS arquivos/streams **finitos**) → `alimiter=limit=0.9`. Como nada chega atrasado, a voz nunca é descartada.
+
+**Rede de segurança em cascata (nunca fica mudo):**
+- Se PASS 2/3 falhar ou sair mudo no WASM → `renderAudioWav` devolve a **voz limpa** do PASS 1 (`cv_*.wav`), que tem jitter+pitch+notches (anti-fingerprint) e som garantido.
+- Se nem o PASS 1 processar → `camouflageAudio`/`protectVideoAudio` caem no **fallback pitch-shift simples**.
+- `meanVolumeDb` (trava de silêncio) agora escreve num **arquivo-sink** (`-f null sink`), porque `-f null -` (stdout) **não funciona no FFmpeg WASM** — era por isso que a trava no vídeo não pegava. Floor = `-45 dB`.
 
 **Técnicas (todas em FFmpeg, sem ML):**
 1. **timing jitter** — divide em trechos de ~1s e aplica micro `atempo` (±%) por trecho (PRNG determinístico). Destrói fingerprint de timing. Imperceptível.
@@ -72,11 +76,13 @@ Faz a transcrição automática falhar mantendo a voz audível pro humano:
 
 **Fluxo atual (em `components/camouflage/video-section.tsx`):**
 1. `camouflageVideo(file)` → blob de vídeo **sem áudio** (WebM ou MP4).
-2. `protectVideoAudio(visualBlob, originalFile, mode|null)` (em `audio.ts`) → remuxa o áudio **da fonte original** dentro do vídeo camuflado:
-   - `mode != null` → processa o áudio original com a cadeia anti-IA (`buildGraph(..., "[1:a]", 2)`) e muxa (`-map 0:v:0 -map [out] -c:v copy`).
-   - `mode == null` (proteção off) → só recoloca o áudio original.
-   - **fallback**: se o grafo anti-IA falhar, recoloca o áudio original puro → nunca fica mudo.
+2. `protectVideoAudio(visualBlob, originalFile, mode|null)` (em `audio.ts`) → coloca o áudio **da fonte original** dentro do vídeo camuflado, em **2 etapas** (corrige "vídeo fica mudo"):
+   - **Etapa 1 — processa o áudio anti-IA pra um WAV STANDALONE** (`buildGraph(..., "[0:a]", 1)` lendo só o áudio original) e mede o `mean_volume` desse WAV. A trava de silêncio é **confiável em áudio puro** — no container de vídeo o `volumedetect` às vezes não media e o mudo passava. Se falhar/sair mudo → usa o áudio original.
+   - **Etapa 2 — muxa** o WAV escolhido (ou o original) no vídeo (`-map 0:v:0 -map 1:a:0? -c:v copy`).
+   - `mode == null` (proteção off) → muxa direto o áudio original.
+   - **fallback** em cascata: WAV anti-IA → áudio original → erro só se nem o original muxar. **Nunca fica mudo.**
    - container: WebM → `libopus`; MP4 → `aac`. Usa `-shortest`.
+   - Tudo dentro de `runExclusive` (mutex): a fila roda 3 jobs e a instância WASM é única.
 
 UI da aba Vídeo: toggle **"Proteger áudio contra IA"** (default ligado, modo `maximo`).
 
@@ -125,11 +131,18 @@ Tudo em `MODES.maximo` de `lib/camouflage/client/audio.ts`:
 4. **Perceptual**: ouvir — voz entendível com leve eco no `maximo`.
 5. **Mono/celular**: confirmar que a voz não some em player mono.
 
+## Concorrência (CRÍTICO — causa de travamento/mudo)
+
+A fila (`useCamouflageQueue`) roda **3 jobs simultâneos**, mas existe **UMA só** instância do FFmpeg WASM (single-thread). Rodar `exec`/`writeFile` de jobs concorrentes na mesma instância **corrompe o FS virtual e trava**. Além disso, nomes de arquivo fixos (`input.mp4`, `output.mp4`…) faziam jobs sobrescreverem uns aos outros.
+
+**Fix:** todo job que usa FFmpeg roda dentro de `runExclusive(task)` (mutex que serializa) e usa **nomes únicos por job** (`nextFileId()`). Vale pra `camouflageAudio`, `protectVideoAudio` e `cleanMetadata`. A parte visual do vídeo (Canvas+MediaRecorder) **não** usa FFmpeg, então roda em paralelo normalmente; só o remux de áudio serializa.
+
 ## Armadilhas conhecidas / a vigiar
 
 - `maximo` introduz leve eco/voz-reversa audível — trade-off inerente (sem ML não dá 100% limpo + anti-IA). Por isso há o modo `leve`.
-- Vídeo faz 2 passos WASM → mais lento; cuidado com memória em arquivos grandes (`camouflageAudio` tem `MAX_BYTES = 150MB`; `protectVideoAudio` não tem guard — adicionar se necessário).
-- `areverse` no WASM bufferiza o áudio inteiro → memória pra áudios/vídeos longos.
+- Vídeo faz 2 passos WASM → mais lento; cuidado com memória em arquivos grandes.
+- **Fontes de ruído (`anoisesrc`) DEVEM ser finitas** (`:duration=`). Infinitas + `areverse` + `amix=duration=first` podiam **travar** o WASM (a primeira entrada do amix chega só no EOF e as infinitas seguem gerando). `lavfiInput(color, duration)` já bound.
+- `areverse` no WASM bufferiza o áudio inteiro → memória pra áudios/vídeos longos. **Guard:** `effectiveCfg()` desativa o scrambler automaticamente quando `duration > REVERSE_MAX_SECONDS` (150s).
 - Vídeo processa em **tempo real** (MediaRecorder): vídeo de 60s leva ~60s.
 - WebM do MediaRecorder às vezes não reporta `duration` → `getDurationFromFile` retorna 0 e o jitter é pulado (ok).
 - Possível drift de sync A/V no remux do vídeo (mitigado por `-shortest`).

@@ -1,6 +1,6 @@
 "use client";
 
-import { loadFFmpeg, fetchFile, getFfmpegLog, clearFfmpegLog, parseFFmpegError } from "./ffmpeg";
+import { loadFFmpeg, fetchFile, getFfmpegLog, clearFfmpegLog, parseFFmpegError, runExclusive, nextFileId } from "./ffmpeg";
 
 export type AudioMode = "leve" | "maximo";
 
@@ -221,8 +221,27 @@ function buildGraph(cfg: ModeCfg, duration: number, audioLabel = "[0:a]", lavfiS
   return { complex: parts.join(";"), needsPink: usePink, needsBrown: useBrown, needsHf: useHf };
 }
 
-function lavfiInput(color: "pink" | "brown"): string[] {
-  return ["-f", "lavfi", "-i", `anoisesrc=color=${color}:amplitude=1.0`];
+/**
+ * Input lavfi de ruído. `duration` (s) é OBRIGATÓRIO pra robustez: sem ele o
+ * `anoisesrc` é infinito e, somado via `amix` ao lado do `areverse` (que só
+ * emite no EOF), pode TRAVAR o WASM. Bounded = a cadeia sempre termina.
+ */
+function lavfiInput(color: "pink" | "brown", duration: number): string[] {
+  const dur = duration > 0 ? `:duration=${(duration + 1).toFixed(3)}` : "";
+  return ["-f", "lavfi", "-i", `anoisesrc=color=${color}:amplitude=1.0${dur}`];
+}
+
+/**
+ * Clona a config desativando o scrambler (areverse) quando o áudio é muito
+ * longo: `areverse` bufferiza o stream inteiro e estoura a memória do WASM em
+ * áudios/vídeos longos (causa de travamento). Mantém o resto da camuflagem.
+ */
+const REVERSE_MAX_SECONDS = 150;
+function effectiveCfg(cfg: ModeCfg, duration: number): ModeCfg {
+  if (cfg.scramblerDb !== null && duration > REVERSE_MAX_SECONDS) {
+    return { ...cfg, scramblerDb: null };
+  }
+  return cfg;
 }
 
 /**
@@ -236,16 +255,162 @@ async function meanVolumeDb(
   fileName: string,
 ): Promise<number | null> {
   clearFfmpegLog();
+  // saída pra um arquivo-sink (NÃO usar "-": stdout não funciona no FFmpeg WASM)
+  const sink = `vd_${nextFileId()}.null`;
   try {
-    await ffmpeg.exec(["-i", fileName, "-map", "0:a:0?", "-af", "volumedetect", "-f", "null", "-"]);
+    await ffmpeg.exec(["-i", fileName, "-vn", "-af", "volumedetect", "-f", "null", "-y", sink]);
   } catch {
+    await ffmpeg.deleteFile(sink).catch(() => {});
     return null;
   }
+  await ffmpeg.deleteFile(sink).catch(() => {});
   const m = getFfmpegLog().match(/mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/);
   return m ? parseFloat(m[1]) : null;
 }
 
-const SILENCE_FLOOR_DB = -50;
+// Abaixo disso é "praticamente mudo" (só ruído de mascaramento ou nada).
+const SILENCE_FLOOR_DB = -45;
+
+/**
+ * Filtro da VOZ processada (sem overlay reverso e sem ruído): mono base →
+ * jitter → declick → pitch → launder → notches → compressor. É a cadeia que
+ * SEMPRE tem som; serve de base do mix e de rede de segurança no `maximo`.
+ */
+function buildVoiceComplex(cfg: ModeCfg, duration: number, label = "[0:a]"): string {
+  const parts: string[] = [];
+  parts.push(cfg.monoBase ? `${label}aresample=${SR},aformat=channel_layouts=mono[base]` : `${label}aresample=${SR}[base]`);
+  let cur = "[base]";
+  if (cfg.jitter > 0.01 && duration > 1.5) {
+    parts.push(buildJitter(duration, cfg.jitter, cur, "[jit]"));
+    cur = "[jit]";
+  }
+  const proc: string[] = ["adeclick"];
+  if (cfg.pitchPercent !== 0) {
+    const ratio = 1 + cfg.pitchPercent / 100;
+    proc.push(`asetrate=${Math.round(SR * ratio)}`, `aresample=${SR}`, `atempo=${(1 / ratio).toFixed(6)}`);
+  }
+  if (cfg.launder > 0.01) {
+    const lp = Math.round(20000 - 14000 * cfg.launder);
+    const bits = (16 - 6 * cfg.launder).toFixed(2);
+    proc.push(`lowpass=f=${lp}`, `acrusher=bits=${bits}:samples=1:mode=lin:level_in=1:level_out=1`);
+  }
+  if (cfg.notches) {
+    proc.push(
+      "bandreject=f=1500:width_type=h:w=220",
+      "bandreject=f=2800:width_type=h:w=320",
+      "bandreject=f=4200:width_type=h:w=420",
+    );
+  }
+  if (cfg.compress) {
+    proc.push("acompressor=threshold=-18dB:ratio=3:attack=20:release=200:makeup=2");
+  }
+  parts.push(`${cur}${proc.join(",")}[out]`);
+  return parts.join(";");
+}
+
+/** Filtro -af que deriva a camada reversa+eco da voz já processada. */
+function scramblerAf(cfg: ModeCfg): string {
+  return `areverse,aecho=in_gain=1:out_gain=0.6:delays=80|160:decays=0.4|0.25,highpass=f=300,lowpass=f=3400,volume=${cfg.scramblerDb}dB`;
+}
+
+/**
+ * Mix final do `maximo`: voz (input 0) + scrambler (input 1) + ruído (inputs
+ * 2..N, finitos). Como TODOS são arquivos/streams finitos, o `amix` nunca
+ * descarta a voz (era a causa do "sem áudio" no grafo único do WASM).
+ */
+function buildMixComplex(cfg: ModeCfg): { complex: string; needsPink: boolean; needsBrown: boolean; needsHf: boolean } {
+  const usePink = cfg.pinkDb > -99;
+  const useBrown = cfg.brownDb > -99;
+  const useHf = cfg.hfDb > -99;
+  const parts: string[] = [];
+  const labels: string[] = ["[0:a]", "[1:a]"];
+  let idx = 2;
+  if (usePink) {
+    parts.push(`[${idx}:a]volume=${cfg.pinkDb}dB[nzP]`);
+    labels.push("[nzP]");
+    idx++;
+  }
+  if (useBrown) {
+    parts.push(`[${idx}:a]volume=${cfg.brownDb}dB[nzB]`);
+    labels.push("[nzB]");
+    idx++;
+  }
+  if (useHf) {
+    parts.push(`[${idx}:a]highpass=f=14000,lowpass=f=18000,volume=${cfg.hfDb}dB[nzH]`);
+    labels.push("[nzH]");
+    idx++;
+  }
+  parts.push(`${labels.join("")}amix=inputs=${labels.length}:duration=first:normalize=0[premix]`);
+  parts.push(`[premix]alimiter=level_in=1:level_out=1:limit=0.9[out]`);
+  return { complex: parts.join(";"), needsPink: usePink, needsBrown: useBrown, needsHf: useHf };
+}
+
+/**
+ * Processa o áudio de `srcName` (já no FS do FFmpeg) e devolve o nome de um WAV
+ * PCM camuflado. NUNCA devolve áudio mudo:
+ *  - `leve` / scrambler off → passe único (voz + ruído + limiter);
+ *  - `maximo` → 3 passes (voz → scrambler → mix), e se o overlay falhar/mudar
+ *    no WASM, devolve a VOZ LIMPA processada (sempre audível).
+ * Lança erro só se nem a voz base processar (aí o chamador faz o fallback simples).
+ */
+async function renderAudioWav(
+  ffmpeg: Awaited<ReturnType<typeof loadFFmpeg>>,
+  srcName: string,
+  mode: AudioMode,
+  duration: number,
+  id: string,
+): Promise<string> {
+  const cfg = effectiveCfg(MODES[mode], duration);
+
+  // ---- caso sem scrambler (leve, ou maximo longo com areverse desativado) ----
+  if (cfg.scramblerDb === null) {
+    const outWav = `cw_${id}.wav`;
+    const graph = buildGraph(cfg, duration, "[0:a]", 1);
+    const inputs = ["-i", srcName];
+    if (graph.needsPink) inputs.push(...lavfiInput("pink", duration));
+    if (graph.needsBrown) inputs.push(...lavfiInput("brown", duration));
+    if (graph.needsHf) inputs.push(...lavfiInput("pink", duration));
+    const channels = cfg.stereoOut ? ["-ac", "2"] : [];
+    const code = await ffmpeg.exec([...inputs, "-filter_complex", graph.complex, "-map", "[out]", ...channels, "-c:a", "pcm_s16le", "-y", outWav]);
+    if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
+    const mean = await meanVolumeDb(ffmpeg, outWav);
+    if (mean !== null && mean < SILENCE_FLOOR_DB) throw new Error("Saída praticamente muda.");
+    return outWav;
+  }
+
+  // ---- maximo: PASS 1 — voz processada (sempre tem som) ----
+  const voiceWav = `cv_${id}.wav`;
+  const vcode = await ffmpeg.exec(["-i", srcName, "-filter_complex", buildVoiceComplex(cfg, duration), "-map", "[out]", "-c:a", "pcm_s16le", "-y", voiceWav]);
+  if (vcode !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
+  const vmean = await meanVolumeDb(ffmpeg, voiceWav);
+  if (vmean !== null && vmean < SILENCE_FLOOR_DB) throw new Error("Voz processada ficou muda.");
+
+  // ---- PASS 2 (scrambler) + PASS 3 (mix). Se algo falhar/mudar → usa a voz limpa. ----
+  const scramWav = `cs_${id}.wav`;
+  const outWav = `cw_${id}.wav`;
+  try {
+    const scode = await ffmpeg.exec(["-i", voiceWav, "-af", scramblerAf(cfg), "-c:a", "pcm_s16le", "-y", scramWav]);
+    if (scode !== 0) throw new Error("scrambler falhou");
+
+    const mix = buildMixComplex(cfg);
+    const inputs = ["-i", voiceWav, "-i", scramWav];
+    if (mix.needsPink) inputs.push(...lavfiInput("pink", duration));
+    if (mix.needsBrown) inputs.push(...lavfiInput("brown", duration));
+    if (mix.needsHf) inputs.push(...lavfiInput("pink", duration));
+    const mcode = await ffmpeg.exec([...inputs, "-filter_complex", mix.complex, "-map", "[out]", "-ac", "2", "-c:a", "pcm_s16le", "-y", outWav]);
+    if (mcode !== 0) throw new Error("mix falhou");
+
+    const omean = await meanVolumeDb(ffmpeg, outWav);
+    if (omean !== null && omean < SILENCE_FLOOR_DB) throw new Error("mix ficou mudo");
+
+    await Promise.allSettled([ffmpeg.deleteFile(scramWav), ffmpeg.deleteFile(voiceWav)]);
+    return outWav;
+  } catch {
+    // overlay anti-IA falhou no WASM → entrega a voz limpa (jitter+pitch+notches): tem som garantido
+    await Promise.allSettled([ffmpeg.deleteFile(scramWav), ffmpeg.deleteFile(outWav)]);
+    return voiceWav;
+  }
+}
 
 export interface AudioCamouflageResult {
   blob: Blob;
@@ -264,70 +429,74 @@ export async function camouflageAudio(
   const ffmpeg = await loadFFmpeg(onProgress);
   const cfg = MODES[mode];
   const inputExt = getExtension(file.name);
-  const inputName = `input${inputExt}`;
   const isVideo = isVideoFile(file);
   const outputExt = isVideo ? inputExt : ".mp3";
-  const outputFile = `output${outputExt}`;
+  const id = nextFileId();
+  const inputName = `in_${id}${inputExt}`;
+  const outputFile = `out_${id}${outputExt}`;
   const outputName = `${file.name.replace(/\.[^.]+$/, "")}_camuflado${outputExt}`;
   // webm mantém libopus; mp4/mov usam aac
   const videoAudioCodec = /\.webm$/i.test(inputExt) ? "libopus" : "aac";
 
   onProgress?.("Analisando arquivo...");
   const duration = await getDurationFromFile(file);
-  await ffmpeg.writeFile(inputName, await fetchFile(file));
 
-  // ---- tentativa principal: cadeia anti-IA via filter_complex ----
-  try {
-    clearFfmpegLog();
-    onProgress?.(mode === "maximo" ? "Camuflando áudio (anti-IA)..." : "Camuflando áudio...");
+  // Tudo que toca o FFmpeg roda serializado (uma instância single-thread só).
+  return runExclusive(async () => {
+    await ffmpeg.writeFile(inputName, await fetchFile(file));
+    let procWav: string | null = null;
+    const cleanup = () =>
+      Promise.allSettled([
+        ffmpeg.deleteFile(inputName),
+        ffmpeg.deleteFile(outputFile),
+        ...(procWav ? [ffmpeg.deleteFile(procWav)] : []),
+      ]);
 
-    const graph = buildGraph(cfg, duration);
-    const inputs: string[] = ["-i", inputName];
-    if (graph.needsPink) inputs.push(...lavfiInput("pink"));
-    if (graph.needsBrown) inputs.push(...lavfiInput("brown"));
-    if (graph.needsHf) inputs.push(...lavfiInput("pink"));
+    // ---- tentativa principal: camuflagem em passes (robusta no WASM) ----
+    try {
+      clearFfmpegLog();
+      onProgress?.(mode === "maximo" ? "Camuflando áudio (anti-IA)..." : "Camuflando áudio...");
 
-    const channels = cfg.stereoOut ? ["-ac", "2"] : [];
-    const fullArgs = isVideo
-      ? [...inputs, "-filter_complex", graph.complex, "-map", "0:v:0", "-map", "[out]", "-c:v", "copy", "-c:a", videoAudioCodec, "-b:a", "160k", ...channels, "-map_metadata", "-1", "-movflags", "+faststart", "-y", outputFile]
-      : [...inputs, "-filter_complex", graph.complex, "-map", "[out]", "-c:a", "libmp3lame", "-b:a", "192k", ...channels, "-map_metadata", "-1", "-y", outputFile];
+      procWav = await renderAudioWav(ffmpeg, inputName, mode, duration, id);
 
-    const code = await ffmpeg.exec(fullArgs);
-    if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
+      onProgress?.("Finalizando...");
+      clearFfmpegLog();
+      // encoda o WAV camuflado no formato de saída (ou remuxa no vídeo original)
+      const encodeArgs = isVideo
+        ? ["-i", inputName, "-i", procWav, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", videoAudioCodec, "-b:a", "160k", "-ac", "2", "-map_metadata", "-1", "-movflags", "+faststart", "-shortest", "-y", outputFile]
+        : ["-i", procWav, "-c:a", "libmp3lame", "-b:a", "192k", "-map_metadata", "-1", "-y", outputFile];
+      const code = await ffmpeg.exec(encodeArgs);
+      if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
 
-    // trava de silêncio: se a cadeia anti-IA zerou o áudio, força o fallback
-    const mean = await meanVolumeDb(ffmpeg, outputFile);
-    if (mean !== null && mean < SILENCE_FLOOR_DB) throw new Error("Saída praticamente muda.");
-
-    const data = await ffmpeg.readFile(outputFile);
-    if (!(data instanceof Uint8Array) || data.length === 0) throw new Error("Saída vazia.");
-    onProgress?.("Finalizando...");
-    const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], {
-      type: isVideo ? file.type || "video/mp4" : "audio/mpeg",
-    });
-    await Promise.allSettled([ffmpeg.deleteFile(inputName), ffmpeg.deleteFile(outputFile)]);
-    return { blob, outputName };
-  } catch {
-    // ---- fallback robusto: pitch-shift simples (nunca quebra) ----
-    onProgress?.("Aplicando camuflagem (modo seguro)...");
-    clearFfmpegLog();
-    const ratio = 1 + cfg.pitchPercent / 100;
-    const simple = `asetrate=${Math.round(SR * ratio)},aresample=${SR},atempo=${(1 / ratio).toFixed(6)}`;
-    const args = isVideo
-      ? ["-i", inputName, "-af", simple, "-c:v", "copy", "-c:a", videoAudioCodec, "-b:a", "160k", "-map_metadata", "-1", "-movflags", "+faststart", "-y", outputFile]
-      : ["-i", inputName, "-af", simple, "-c:a", "libmp3lame", "-b:a", "192k", "-map_metadata", "-1", "-y", outputFile];
-    const code = await ffmpeg.exec(args);
-    if (code !== 0) {
-      await Promise.allSettled([ffmpeg.deleteFile(inputName), ffmpeg.deleteFile(outputFile)]);
-      throw new Error(parseFFmpegError(getFfmpegLog()));
+      const data = await ffmpeg.readFile(outputFile);
+      if (!(data instanceof Uint8Array) || data.length === 0) throw new Error("Saída vazia.");
+      const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], {
+        type: isVideo ? file.type || "video/mp4" : "audio/mpeg",
+      });
+      await cleanup();
+      return { blob, outputName };
+    } catch {
+      // ---- fallback robusto: pitch-shift simples (nunca quebra, nunca muta) ----
+      onProgress?.("Aplicando camuflagem (modo seguro)...");
+      clearFfmpegLog();
+      const ratio = 1 + cfg.pitchPercent / 100;
+      const simple = `asetrate=${Math.round(SR * ratio)},aresample=${SR},atempo=${(1 / ratio).toFixed(6)}`;
+      const args = isVideo
+        ? ["-i", inputName, "-af", simple, "-c:v", "copy", "-c:a", videoAudioCodec, "-b:a", "160k", "-map_metadata", "-1", "-movflags", "+faststart", "-shortest", "-y", outputFile]
+        : ["-i", inputName, "-af", simple, "-c:a", "libmp3lame", "-b:a", "192k", "-map_metadata", "-1", "-y", outputFile];
+      const code = await ffmpeg.exec(args);
+      if (code !== 0) {
+        await cleanup();
+        throw new Error(parseFFmpegError(getFfmpegLog()));
+      }
+      const data = await ffmpeg.readFile(outputFile);
+      const blob = new Blob([new Uint8Array((data as Uint8Array).buffer as ArrayBuffer)], {
+        type: isVideo ? file.type || "video/mp4" : "audio/mpeg",
+      });
+      await cleanup();
+      return { blob, outputName };
     }
-    const data = await ffmpeg.readFile(outputFile);
-    const blob = new Blob([new Uint8Array((data as Uint8Array).buffer as ArrayBuffer)], {
-      type: isVideo ? file.type || "video/mp4" : "audio/mpeg",
-    });
-    await Promise.allSettled([ffmpeg.deleteFile(inputName), ffmpeg.deleteFile(outputFile)]);
-    return { blob, outputName };
-  }
+  });
 }
 
 /**
@@ -335,6 +504,15 @@ export async function camouflageAudio(
  * do vídeo já camuflado visualmente. Usado pela aba Vídeo: o vídeo é gravado
  * sem áudio (a captura via canvas não é confiável) e o áudio vem direto da
  * fonte original aqui — assim nunca some.
+ *
+ * Estratégia robusta (corrige "vídeo fica mudo" e "trava"):
+ *  1) processa o áudio anti-IA pra um WAV STANDALONE (a trava de silêncio via
+ *     `volumedetect` é confiável em áudio puro — no container de vídeo às vezes
+ *     não media direito e o mudo passava);
+ *  2) só então muxa esse WAV (ou o áudio original, se o anti-IA falhar/mudar)
+ *     no vídeo. Garante que SEMPRE sai com som.
+ * Tudo serializado via `runExclusive` (a fila roda 3 jobs e a instância WASM
+ * é única — concorrência sem isso corrompia o FS e travava).
  *
  * @param videoBlob vídeo camuflado visualmente (sem áudio), do MediaRecorder
  * @param original  arquivo original (fonte de áudio)
@@ -350,77 +528,81 @@ export async function protectVideoAudio(
   const isWebm = /webm/i.test(videoBlob.type);
   const vExt = isWebm ? ".webm" : ".mp4";
   const audioCodec = isWebm ? "libopus" : "aac";
-  const vName = `cam${vExt}`;
-  const aName = `orig${getExtension(original.name)}`;
-  const outName = `final${vExt}`;
+  const id = nextFileId();
+  const vName = `cam_${id}${vExt}`;
+  const aName = `orig_${id}${getExtension(original.name)}`;
+  const outName = `final_${id}${vExt}`;
   const base = original.name.replace(/\.[^.]+$/, "");
   const outputName = `${base}_camuflado${vExt}`;
   const outType = isWebm ? "video/webm" : "video/mp4";
 
-  await ffmpeg.writeFile(vName, await fetchFile(videoBlob));
-  await ffmpeg.writeFile(aName, await fetchFile(original));
+  const duration = mode === null ? 0 : await getDurationFromFile(original);
 
-  const cleanup = () =>
-    Promise.allSettled([ffmpeg.deleteFile(vName), ffmpeg.deleteFile(aName), ffmpeg.deleteFile(outName)]);
+  let renderedWav: string | null = null;
+  return runExclusive(async () => {
+    await ffmpeg.writeFile(vName, await fetchFile(videoBlob));
+    await ffmpeg.writeFile(aName, await fetchFile(original));
 
-  // remux simples: copia vídeo, recoloca o áudio original (sem anti-IA)
-  const plainArgs = [
-    "-i", vName, "-i", aName,
-    "-map", "0:v:0", "-map", "1:a:0?",
-    "-c:v", "copy", "-c:a", audioCodec, "-b:a", "160k", "-ac", "2",
-    "-map_metadata", "-1", "-movflags", "+faststart", "-shortest", "-y", outName,
-  ];
-
-  try {
-    clearFfmpegLog();
-    if (mode === null) {
-      onProgress?.("Recolocando áudio...");
-      const code = await ffmpeg.exec(plainArgs);
-      if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
-    } else {
-      onProgress?.(mode === "maximo" ? "Protegendo áudio (anti-IA)..." : "Protegendo áudio...");
-      const cfg = MODES[mode];
-      const duration = await getDurationFromFile(original);
-      const graph = buildGraph(cfg, duration, "[1:a]", 2);
-      const inputs = ["-i", vName, "-i", aName];
-      if (graph.needsPink) inputs.push(...lavfiInput("pink"));
-      if (graph.needsBrown) inputs.push(...lavfiInput("brown"));
-      if (graph.needsHf) inputs.push(...lavfiInput("pink"));
-      const code = await ffmpeg.exec([
-        ...inputs, "-filter_complex", graph.complex,
-        "-map", "0:v:0", "-map", "[out]",
-        "-c:v", "copy", "-c:a", audioCodec, "-b:a", "160k", "-ac", "2",
-        "-map_metadata", "-1", "-movflags", "+faststart", "-shortest", "-y", outName,
+    const cleanup = () =>
+      Promise.allSettled([
+        ffmpeg.deleteFile(vName),
+        ffmpeg.deleteFile(aName),
+        ffmpeg.deleteFile(outName),
+        ...(renderedWav ? [ffmpeg.deleteFile(renderedWav)] : []),
       ]);
-      if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
 
-      // trava de silêncio: se a cadeia anti-IA zerou o áudio, cai no remux simples
-      const mean = await meanVolumeDb(ffmpeg, outName);
-      if (mean !== null && mean < SILENCE_FLOOR_DB) throw new Error("Áudio anti-IA ficou mudo.");
+    // muxa um arquivo de áudio (audioFile) dentro do vídeo camuflado
+    const muxArgs = (audioFile: string) => [
+      "-i", vName, "-i", audioFile,
+      "-map", "0:v:0", "-map", "1:a:0?",
+      "-c:v", "copy", "-c:a", audioCodec, "-b:a", "160k", "-ac", "2",
+      "-map_metadata", "-1", "-movflags", "+faststart", "-shortest", "-y", outName,
+    ];
+
+    // 1) tenta produzir o WAV anti-IA (em passes, robusto); se falhar, usa o original
+    let audioSource = aName;
+    if (mode !== null) {
+      try {
+        onProgress?.(mode === "maximo" ? "Protegendo áudio (anti-IA)..." : "Protegendo áudio...");
+        clearFfmpegLog();
+        renderedWav = await renderAudioWav(ffmpeg, aName, mode, duration, id);
+        audioSource = renderedWav; // anti-IA OK (renderAudioWav nunca devolve mudo)
+      } catch {
+        audioSource = aName; // qualquer falha → usa o áudio original (nunca fica mudo)
+      }
     }
 
-    const data = await ffmpeg.readFile(outName);
-    if (!(data instanceof Uint8Array) || data.length === 0) throw new Error("Saída vazia.");
-    const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], { type: outType });
-    await cleanup();
-    return { blob, outputName };
-  } catch (err) {
-    // fallback: pelo menos recoloca o áudio original pra não perder o som
+    // 2) muxa o áudio escolhido no vídeo
     try {
       clearFfmpegLog();
-      const code = await ffmpeg.exec(plainArgs);
-      if (code === 0) {
-        const data = await ffmpeg.readFile(outName);
-        if (data instanceof Uint8Array && data.length > 0) {
-          const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], { type: outType });
-          await cleanup();
-          return { blob, outputName };
+      onProgress?.("Finalizando vídeo...");
+      const code = await ffmpeg.exec(muxArgs(audioSource));
+      if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
+      const data = await ffmpeg.readFile(outName);
+      if (!(data instanceof Uint8Array) || data.length === 0) throw new Error("Saída vazia.");
+      const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], { type: outType });
+      await cleanup();
+      return { blob, outputName };
+    } catch (err) {
+      // último recurso: muxar o áudio original (se ainda não era ele)
+      if (audioSource !== aName) {
+        try {
+          clearFfmpegLog();
+          const code = await ffmpeg.exec(muxArgs(aName));
+          if (code === 0) {
+            const data = await ffmpeg.readFile(outName);
+            if (data instanceof Uint8Array && data.length > 0) {
+              const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], { type: outType });
+              await cleanup();
+              return { blob, outputName };
+            }
+          }
+        } catch {
+          /* cai pro throw abaixo */
         }
       }
-    } catch {
-      /* cai pro throw abaixo */
+      await cleanup();
+      throw err instanceof Error ? err : new Error("Falha ao proteger o áudio do vídeo.");
     }
-    await cleanup();
-    throw err instanceof Error ? err : new Error("Falha ao proteger o áudio do vídeo.");
-  }
+  });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { loadFFmpeg, fetchFile, getFfmpegLog, clearFfmpegLog, parseFFmpegError } from "./ffmpeg";
+import { loadFFmpeg, fetchFile, getFfmpegLog, clearFfmpegLog, parseFFmpegError, runExclusive, nextFileId } from "./ffmpeg";
 
 export type CompressionLevel = "nenhuma" | "leve" | "media" | "alta";
 
@@ -47,7 +47,6 @@ export async function cleanMetadata(
 
   const ffmpeg = await loadFFmpeg(onProgress);
   const inputExt = getExtension(file.name);
-  const inputName = `input${inputExt}`;
   const isVideo = isVideoFile(file);
   const isImage = isImageFile(file);
 
@@ -55,56 +54,61 @@ export async function cleanMetadata(
     throw new Error("Formato não suportado para limpeza de metadados.");
   }
 
+  const id = nextFileId();
+  const inputName = `in_${id}${inputExt}`;
   const outputExt = isImage ? (inputExt === ".png" ? ".png" : ".jpg") : ".mp4";
-  const outputFile = `output${outputExt}`;
+  const outputFile = `out_${id}${outputExt}`;
   const outputName = `${file.name.replace(/\.[^.]+$/, "")}_limpo${outputExt}`;
 
-  try {
-    clearFfmpegLog();
-    onProgress?.("Lendo arquivo...");
-    await ffmpeg.writeFile(inputName, await fetchFile(file));
+  // Serializado: a instância FFmpeg WASM é única e a fila roda jobs em paralelo.
+  return runExclusive(async () => {
+    try {
+      clearFfmpegLog();
+      onProgress?.("Lendo arquivo...");
+      await ffmpeg.writeFile(inputName, await fetchFile(file));
 
-    let args: string[];
-    if (isImage) {
-      onProgress?.("Removendo metadados da imagem...");
-      args = ["-i", inputName, "-map_metadata", "-1", "-y", outputFile];
-    } else if (compression === "nenhuma") {
-      onProgress?.("Removendo metadados (sem recompressão)...");
-      args = ["-i", inputName, "-map_metadata", "-1", "-c", "copy", "-movflags", "+faststart", "-y", outputFile];
-    } else {
-      onProgress?.("Limpando metadados e comprimindo...");
-      const crf = CRF_BY_LEVEL[compression];
-      args = [
-        "-i", inputName,
-        "-map_metadata", "-1",
-        "-c:v", "libx264",
-        "-crf", String(crf),
-        "-preset", "veryfast",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-        "-y", outputFile,
-      ];
-    }
+      let args: string[];
+      if (isImage) {
+        onProgress?.("Removendo metadados da imagem...");
+        args = ["-i", inputName, "-map_metadata", "-1", "-y", outputFile];
+      } else if (compression === "nenhuma") {
+        onProgress?.("Removendo metadados (sem recompressão)...");
+        args = ["-i", inputName, "-map_metadata", "-1", "-c", "copy", "-movflags", "+faststart", "-y", outputFile];
+      } else {
+        onProgress?.("Limpando metadados e comprimindo...");
+        const crf = CRF_BY_LEVEL[compression];
+        args = [
+          "-i", inputName,
+          "-map_metadata", "-1",
+          "-c:v", "libx264",
+          "-crf", String(crf),
+          "-preset", "veryfast",
+          "-c:a", "aac",
+          "-b:a", "128k",
+          "-movflags", "+faststart",
+          "-y", outputFile,
+        ];
+      }
 
-    const exitCode = await ffmpeg.exec(args);
-    if (exitCode !== 0) {
+      const exitCode = await ffmpeg.exec(args);
+      if (exitCode !== 0) {
+        throw new Error(parseFFmpegError(getFfmpegLog()));
+      }
+
+      onProgress?.("Finalizando...");
+      const data = await ffmpeg.readFile(outputFile);
+      if (!(data instanceof Uint8Array) || data.length === 0) {
+        throw new Error("O arquivo processado não foi gerado corretamente.");
+      }
+
+      const mimeType = isImage ? (outputExt === ".png" ? "image/png" : "image/jpeg") : "video/mp4";
+      const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], { type: mimeType });
+      return { blob, outputName };
+    } catch (err) {
+      if (err instanceof Error) throw err;
       throw new Error(parseFFmpegError(getFfmpegLog()));
+    } finally {
+      await Promise.allSettled([ffmpeg.deleteFile(inputName), ffmpeg.deleteFile(outputFile)]);
     }
-
-    onProgress?.("Finalizando...");
-    const data = await ffmpeg.readFile(outputFile);
-    if (!(data instanceof Uint8Array) || data.length === 0) {
-      throw new Error("O arquivo processado não foi gerado corretamente.");
-    }
-
-    const mimeType = isImage ? (outputExt === ".png" ? "image/png" : "image/jpeg") : "video/mp4";
-    const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], { type: mimeType });
-    return { blob, outputName };
-  } catch (err) {
-    if (err instanceof Error) throw err;
-    throw new Error(parseFFmpegError(getFfmpegLog()));
-  } finally {
-    await Promise.allSettled([ffmpeg.deleteFile(inputName), ffmpeg.deleteFile(outputFile)]);
-  }
+  });
 }

@@ -59,6 +59,31 @@ export function preloadFFmpeg(): void {
   loadFFmpeg().catch(() => {});
 }
 
+/**
+ * Serializa o acesso ao FFmpeg WASM. CRÍTICO: existe UMA só instância
+ * (singleton) single-thread; rodar `exec`/`writeFile` de jobs concorrentes (a
+ * fila processa 3 simultâneos) na mesma instância corrompe o FS virtual e
+ * trava. Todo job que usa FFmpeg deve rodar dentro de `runExclusive`.
+ */
+let ffmpegLock: Promise<unknown> = Promise.resolve();
+
+export function runExclusive<T>(task: () => Promise<T>): Promise<T> {
+  const run = ffmpegLock.then(task, task);
+  // mantém a corrente viva mesmo se um job falhar (não propaga rejeição)
+  ffmpegLock = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/** ID curto pra nomear arquivos por job e evitar colisão no FS virtual. */
+let idCounter = 0;
+export function nextFileId(): string {
+  idCounter = (idCounter + 1) % 1_000_000;
+  return `${Date.now().toString(36)}${idCounter.toString(36)}`;
+}
+
 export { fetchFile };
 
 /**
