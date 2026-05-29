@@ -7,11 +7,10 @@ import { AppHeader } from "@/components/app/app-header";
 import { Button } from "@/components/ui/button";
 import { preloadFFmpeg } from "@/lib/camouflage/client/ffmpeg";
 import { VideoSection } from "@/components/camouflage/video-section";
-import { AudioSection } from "@/components/camouflage/audio-section";
 import { ImageSection } from "@/components/camouflage/image-section";
 import { MetadataSection } from "@/components/camouflage/metadata-section";
 
-type Tab = "video" | "audio" | "image" | "metadata";
+type Tab = "video" | "image" | "metadata";
 
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   {
@@ -21,15 +20,6 @@ const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <rect x="2" y="5" width="14" height="14" rx="2" />
         <path d="m22 8-6 4 6 4V8z" />
-      </svg>
-    ),
-  },
-  {
-    id: "audio",
-    label: "Áudio",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 11v2" />
       </svg>
     ),
   },
@@ -90,7 +80,7 @@ export default function DashboardPage() {
       <section className="relative z-10 mx-auto max-w-5xl">
         <AppHeader
           title="Central de camuflagem"
-          subtitle="Suprima a assinatura dos seus criativos — vídeo, áudio, imagem e metadados. Tudo processado no seu navegador."
+          subtitle="Suprima a assinatura dos seus criativos — vídeo, imagem e metadados."
           actions={
             <Button type="button" onClick={signOut} variant="outline" size="sm">
               Sair
@@ -137,15 +127,10 @@ export default function DashboardPage() {
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           >
             {tab === "video" ? <VideoSection /> : null}
-            {tab === "audio" ? <AudioSection /> : null}
             {tab === "image" ? <ImageSection /> : null}
             {tab === "metadata" ? <MetadataSection /> : null}
           </motion.div>
         </AnimatePresence>
-
-        <p className="mt-6 text-center text-xs text-muted">
-          Nada é enviado pra servidores — a camuflagem acontece 100% no seu navegador. Os arquivos somem ao recarregar a página.
-        </p>
       </section>
     </main>
   );

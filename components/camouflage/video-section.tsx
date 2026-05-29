@@ -12,8 +12,8 @@ import {
 import { Dropzone, ModeSelector, SectionCard, ServerJobList, TargetPresetPicker } from "./shared";
 
 const MODES: { value: JobMode; label: string; desc: string }[] = [
-  { value: "fast", label: "Rápido", desc: "Áudio com viés de tópico + prompt-inject + SRT + metadados." },
-  { value: "max", label: "Máximo (anti-IA)", desc: "Cancelamento de fase no áudio: a IA só transcreve o decoy. Limpa metadados." },
+  { value: "fast", label: "Rápido", desc: "Camuflagem rápida e efetiva: encriptamento + prompt injection que confunde a IA." },
+  { value: "max", label: "Máximo (anti-IA)", desc: "Tratamento pesado: múltiplos ataques sobre as faixas e legendas do vídeo. O ruído pode ficar um pouco mais perceptível." },
 ];
 
 export function VideoSection() {
@@ -31,7 +31,7 @@ export function VideoSection() {
   return (
     <SectionCard
       title="Camuflagem de vídeo"
-      description="O vídeo é processado no servidor: a faixa de áudio recebe a camada anti-IA (fala-alvo + injeção de palavras-chave + tratamento), o vídeo ganha prompt-injection sutil, legenda (SRT) e metadados do tópico-alvo. No modo Máximo, soma um ataque adversarial no Whisper. O resultado some na fila abaixo para download."
+      description="Envie seu vídeo e escolha o nível de camuflagem. Ele entra na fila, é processado e fica pronto pra download na lista abaixo."
     >
       <div className="flex flex-wrap items-center gap-4">
         <ModeSelector value={mode} options={MODES} onChange={setMode} />
