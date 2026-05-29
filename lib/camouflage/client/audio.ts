@@ -17,7 +17,12 @@ const SR = 48000;
  *           downmix mono que a ASR (Whisper/Gemini) usa fica dominado por fala
  *           reversa/eco não-transcrevível, mas a voz original SOBREVIVE no mono
  *           (toca em celular) e o humano entende via separação cognitiva.
- *           Aceita um leve eco audível — é o trade-off pra realmente enganar a IA.
+ *
+ * Gain-staging (corrige o bug de "som não sai" no maximo): a voz passa por
+ * `acompressor` (fica densa/dominante), o scrambler entra ~8 dB ABAIXO, e a
+ * cadeia termina num `alimiter` que impede a saturação que o `aecho` causava
+ * (o que destruía/zerava o áudio). Há ainda uma trava de silêncio em runtime:
+ * se a saída sair muda (mean_volume < -50 dB), cai automático no fallback.
  */
 interface ModeCfg {
   monoBase: boolean;
@@ -25,6 +30,7 @@ interface ModeCfg {
   pitchPercent: number;
   notches: boolean;
   scramblerDb: number | null; // null = sem camada reversa
+  compress: boolean; // acompressor na voz pra ela dominar o mix
   pinkDb: number; // -100 = off
   brownDb: number;
   hfDb: number;
@@ -39,6 +45,7 @@ const MODES: Record<AudioMode, ModeCfg> = {
     pitchPercent: 0.4,
     notches: false,
     scramblerDb: null,
+    compress: false,
     pinkDb: -54,
     brownDb: -100,
     hfDb: -50,
@@ -50,7 +57,8 @@ const MODES: Record<AudioMode, ModeCfg> = {
     jitter: 0.4,
     pitchPercent: 1.0,
     notches: true,
-    scramblerDb: -6,
+    scramblerDb: -8,
+    compress: true,
     pinkDb: -48,
     brownDb: -52,
     hfDb: -44,
@@ -163,12 +171,18 @@ function buildGraph(cfg: ModeCfg, duration: number, audioLabel = "[0:a]", lavfiS
   if (useScrambler) {
     // deriva a camada reversa+eco da voz processada; aplica notches na voz principal
     parts.push(`[proc]asplit=2[main][scr]`);
+    // notches nas bandas de consoante (destroem pistas de fonema pra ASR)
     const notches = cfg.notches
-      ? ",bandreject=f=1500:width_type=h:w=250,bandreject=f=2800:width_type=h:w=350,bandreject=f=4500:width_type=h:w=450"
+      ? ",bandreject=f=1500:width_type=h:w=220,bandreject=f=2800:width_type=h:w=320,bandreject=f=4200:width_type=h:w=420"
       : "";
-    parts.push(`[main]anull${notches}[voxN]`);
+    // acompressor deixa a voz densa e dominante (anti "voz some sob o eco")
+    const comp = cfg.compress
+      ? ",acompressor=threshold=-18dB:ratio=3:attack=20:release=200:makeup=2"
+      : "";
+    parts.push(`[main]anull${notches}${comp}[voxN]`);
+    // out_gain<1 e scrambler ~8 dB abaixo: confunde a ASR sem saturar / sem cobrir a voz
     parts.push(
-      `[scr]areverse,aecho=in_gain=1:out_gain=0.85:delays=90|180:decays=0.5|0.3,highpass=f=250,lowpass=f=3600,volume=${cfg.scramblerDb}dB[scram]`,
+      `[scr]areverse,aecho=in_gain=1:out_gain=0.6:delays=80|160:decays=0.4|0.25,highpass=f=300,lowpass=f=3400,volume=${cfg.scramblerDb}dB[scram]`,
     );
     parts.push(`[voxN][scram]amix=inputs=2:duration=first:normalize=0[mix]`);
     cur = "[mix]";
@@ -194,11 +208,15 @@ function buildGraph(cfg: ModeCfg, duration: number, audioLabel = "[0:a]", lavfiS
     noise.push("[nzH]");
   }
 
+  let mixed: string;
   if (noise.length > 0) {
-    parts.push(`${cur}${noise.join("")}amix=inputs=${1 + noise.length}:duration=first:normalize=0[out]`);
+    parts.push(`${cur}${noise.join("")}amix=inputs=${1 + noise.length}:duration=first:normalize=0[premix]`);
+    mixed = "[premix]";
   } else {
-    parts.push(`${cur}anull[out]`);
+    mixed = cur;
   }
+  // alimiter final: barra os picos do eco/mix (era a saturação que zerava/destruía o áudio)
+  parts.push(`${mixed}alimiter=level_in=1:level_out=1:limit=0.9[out]`);
 
   return { complex: parts.join(";"), needsPink: usePink, needsBrown: useBrown, needsHf: useHf };
 }
@@ -206,6 +224,28 @@ function buildGraph(cfg: ModeCfg, duration: number, audioLabel = "[0:a]", lavfiS
 function lavfiInput(color: "pink" | "brown"): string[] {
   return ["-f", "lavfi", "-i", `anoisesrc=color=${color}:amplitude=1.0`];
 }
+
+/**
+ * Mede o volume médio (dBFS) da trilha de áudio de um arquivo já no FS do
+ * FFmpeg via `volumedetect`. Usado como trava de silêncio: se a cadeia anti-IA
+ * produzir uma saída muda (bug do maximo), detectamos aqui e caímos no fallback.
+ * Retorna null se não conseguir medir (nesse caso, não bloqueia).
+ */
+async function meanVolumeDb(
+  ffmpeg: Awaited<ReturnType<typeof loadFFmpeg>>,
+  fileName: string,
+): Promise<number | null> {
+  clearFfmpegLog();
+  try {
+    await ffmpeg.exec(["-i", fileName, "-map", "0:a:0?", "-af", "volumedetect", "-f", "null", "-"]);
+  } catch {
+    return null;
+  }
+  const m = getFfmpegLog().match(/mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB/);
+  return m ? parseFloat(m[1]) : null;
+}
+
+const SILENCE_FLOOR_DB = -50;
 
 export interface AudioCamouflageResult {
   blob: Blob;
@@ -254,6 +294,10 @@ export async function camouflageAudio(
 
     const code = await ffmpeg.exec(fullArgs);
     if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
+
+    // trava de silêncio: se a cadeia anti-IA zerou o áudio, força o fallback
+    const mean = await meanVolumeDb(ffmpeg, outputFile);
+    if (mean !== null && mean < SILENCE_FLOOR_DB) throw new Error("Saída praticamente muda.");
 
     const data = await ffmpeg.readFile(outputFile);
     if (!(data instanceof Uint8Array) || data.length === 0) throw new Error("Saída vazia.");
@@ -349,6 +393,10 @@ export async function protectVideoAudio(
         "-map_metadata", "-1", "-movflags", "+faststart", "-shortest", "-y", outName,
       ]);
       if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
+
+      // trava de silêncio: se a cadeia anti-IA zerou o áudio, cai no remux simples
+      const mean = await meanVolumeDb(ffmpeg, outName);
+      if (mean !== null && mean < SILENCE_FLOOR_DB) throw new Error("Áudio anti-IA ficou mudo.");
     }
 
     const data = await ffmpeg.readFile(outName);
