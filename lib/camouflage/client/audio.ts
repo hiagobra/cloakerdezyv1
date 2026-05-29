@@ -130,7 +130,7 @@ interface Graph {
   needsHf: boolean;
 }
 
-function buildGraph(cfg: ModeCfg, duration: number): Graph {
+function buildGraph(cfg: ModeCfg, duration: number, audioLabel = "[0:a]", lavfiStart = 1): Graph {
   const useJitter = cfg.jitter > 0.01 && duration > 1.5;
   const usePink = cfg.pinkDb > -99;
   const useBrown = cfg.brownDb > -99;
@@ -138,7 +138,7 @@ function buildGraph(cfg: ModeCfg, duration: number): Graph {
   const useScrambler = cfg.scramblerDb !== null;
 
   const parts: string[] = [];
-  parts.push(cfg.monoBase ? `[0:a]aresample=${SR},aformat=channel_layouts=mono[base]` : `[0:a]aresample=${SR}[base]`);
+  parts.push(cfg.monoBase ? `${audioLabel}aresample=${SR},aformat=channel_layouts=mono[base]` : `${audioLabel}aresample=${SR}[base]`);
   let cur = "[base]";
 
   if (useJitter) {
@@ -174,8 +174,8 @@ function buildGraph(cfg: ModeCfg, duration: number): Graph {
     cur = "[mix]";
   }
 
-  // alocação de inputs lavfi (após o input 0)
-  let idx = 1;
+  // alocação de inputs lavfi (após os inputs reais)
+  let idx = lavfiStart;
   const pinkIdx = usePink ? idx++ : -1;
   const brownIdx = useBrown ? idx++ : -1;
   const hfIdx = useHf ? idx++ : -1;
@@ -283,5 +283,96 @@ export async function camouflageAudio(
     });
     await Promise.allSettled([ffmpeg.deleteFile(inputName), ffmpeg.deleteFile(outputFile)]);
     return { blob, outputName };
+  }
+}
+
+/**
+ * Remuxa o áudio do arquivo ORIGINAL (opcionalmente camuflado anti-IA) dentro
+ * do vídeo já camuflado visualmente. Usado pela aba Vídeo: o vídeo é gravado
+ * sem áudio (a captura via canvas não é confiável) e o áudio vem direto da
+ * fonte original aqui — assim nunca some.
+ *
+ * @param videoBlob vídeo camuflado visualmente (sem áudio), do MediaRecorder
+ * @param original  arquivo original (fonte de áudio)
+ * @param mode      AudioMode pra processar o áudio, ou null pra só recolocar o original
+ */
+export async function protectVideoAudio(
+  videoBlob: Blob,
+  original: File,
+  mode: AudioMode | null,
+  onProgress?: (msg: string) => void,
+): Promise<{ blob: Blob; outputName: string }> {
+  const ffmpeg = await loadFFmpeg(onProgress);
+  const isWebm = /webm/i.test(videoBlob.type);
+  const vExt = isWebm ? ".webm" : ".mp4";
+  const audioCodec = isWebm ? "libopus" : "aac";
+  const vName = `cam${vExt}`;
+  const aName = `orig${getExtension(original.name)}`;
+  const outName = `final${vExt}`;
+  const base = original.name.replace(/\.[^.]+$/, "");
+  const outputName = `${base}_camuflado${vExt}`;
+  const outType = isWebm ? "video/webm" : "video/mp4";
+
+  await ffmpeg.writeFile(vName, await fetchFile(videoBlob));
+  await ffmpeg.writeFile(aName, await fetchFile(original));
+
+  const cleanup = () =>
+    Promise.allSettled([ffmpeg.deleteFile(vName), ffmpeg.deleteFile(aName), ffmpeg.deleteFile(outName)]);
+
+  // remux simples: copia vídeo, recoloca o áudio original (sem anti-IA)
+  const plainArgs = [
+    "-i", vName, "-i", aName,
+    "-map", "0:v:0", "-map", "1:a:0?",
+    "-c:v", "copy", "-c:a", audioCodec, "-b:a", "160k", "-ac", "2",
+    "-map_metadata", "-1", "-movflags", "+faststart", "-shortest", "-y", outName,
+  ];
+
+  try {
+    clearFfmpegLog();
+    if (mode === null) {
+      onProgress?.("Recolocando áudio...");
+      const code = await ffmpeg.exec(plainArgs);
+      if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
+    } else {
+      onProgress?.(mode === "maximo" ? "Protegendo áudio (anti-IA)..." : "Protegendo áudio...");
+      const cfg = MODES[mode];
+      const duration = await getDurationFromFile(original);
+      const graph = buildGraph(cfg, duration, "[1:a]", 2);
+      const inputs = ["-i", vName, "-i", aName];
+      if (graph.needsPink) inputs.push(...lavfiInput("pink"));
+      if (graph.needsBrown) inputs.push(...lavfiInput("brown"));
+      if (graph.needsHf) inputs.push(...lavfiInput("pink"));
+      const code = await ffmpeg.exec([
+        ...inputs, "-filter_complex", graph.complex,
+        "-map", "0:v:0", "-map", "[out]",
+        "-c:v", "copy", "-c:a", audioCodec, "-b:a", "160k", "-ac", "2",
+        "-map_metadata", "-1", "-movflags", "+faststart", "-shortest", "-y", outName,
+      ]);
+      if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
+    }
+
+    const data = await ffmpeg.readFile(outName);
+    if (!(data instanceof Uint8Array) || data.length === 0) throw new Error("Saída vazia.");
+    const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], { type: outType });
+    await cleanup();
+    return { blob, outputName };
+  } catch (err) {
+    // fallback: pelo menos recoloca o áudio original pra não perder o som
+    try {
+      clearFfmpegLog();
+      const code = await ffmpeg.exec(plainArgs);
+      if (code === 0) {
+        const data = await ffmpeg.readFile(outName);
+        if (data instanceof Uint8Array && data.length > 0) {
+          const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], { type: outType });
+          await cleanup();
+          return { blob, outputName };
+        }
+      }
+    } catch {
+      /* cai pro throw abaixo */
+    }
+    await cleanup();
+    throw err instanceof Error ? err : new Error("Falha ao proteger o áudio do vídeo.");
   }
 }

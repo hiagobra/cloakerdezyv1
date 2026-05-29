@@ -117,8 +117,7 @@ export async function camouflageVideo(
     const video = document.createElement("video");
     video.playsInline = true;
     video.preload = "auto";
-    video.muted = false;
-    video.volume = 0; // não toca alto pro usuário, mas mantém o track de áudio
+    video.muted = true; // grava SÓ o vídeo; o áudio é remuxado depois da fonte original
 
     const objUrl = URL.createObjectURL(file);
     video.src = objUrl;
@@ -157,14 +156,6 @@ export async function camouflageVideo(
 
       const out = new MediaStream();
       canvas.captureStream().getVideoTracks().forEach((t) => out.addTrack(t));
-      try {
-        const vWithCap = video as HTMLVideoElement & { captureStream?: () => MediaStream };
-        if (typeof vWithCap.captureStream === "function") {
-          vWithCap.captureStream().getAudioTracks().forEach((t) => out.addTrack(t));
-        }
-      } catch {
-        /* vídeo sem áudio */
-      }
 
       let recorder: MediaRecorder;
       try {

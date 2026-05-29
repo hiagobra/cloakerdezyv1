@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { camouflageVideo, type VideoMode } from "@/lib/camouflage/client/video";
-import { camouflageAudio, type AudioMode } from "@/lib/camouflage/client/audio";
+import { protectVideoAudio, type AudioMode } from "@/lib/camouflage/client/audio";
 import { useCamouflageQueue } from "@/lib/camouflage/client/queue";
 import { trackCamouflage, useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
 import { CamoResult, CoverPicker, Dropzone, JobList, ModeSelector, SectionCard } from "./shared";
@@ -38,15 +38,15 @@ export function VideoSection() {
       videos.map((file) => ({
         fileName: file.name,
         run: async (onProgress) => {
+          // 1º: camuflagem visual (vídeo gravado SEM áudio)
           const visual = await camouflageVideo(file, { mode, cover, onProgress });
-          if (!protectAudio) {
-            return { blob: visual.blob, outputName: visual.outputName };
-          }
-          // 2º passo: protege a faixa de áudio contra IA (copia o vídeo, re-encoda só o áudio)
-          const ext = visual.outputName.match(/\.[^.]+$/)?.[0] ?? ".mp4";
-          const base = file.name.replace(/\.[^.]+$/, "");
-          const wrapped = new File([visual.blob], `${base}${ext}`, { type: visual.blob.type });
-          const out = await camouflageAudio(wrapped, audioMode, (m) => onProgress(`Áudio: ${m}`));
+          // 2º: remuxa o áudio da fonte original (protegido anti-IA ou só recolocado)
+          const out = await protectVideoAudio(
+            visual.blob,
+            file,
+            protectAudio ? audioMode : null,
+            (m) => onProgress(`Áudio: ${m}`),
+          );
           return { blob: out.blob, outputName: out.outputName };
         },
       })),
