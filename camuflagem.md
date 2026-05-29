@@ -4,13 +4,38 @@
 
 ## Visão geral
 
-Camuflagem roda **100% no navegador** (client-side). Não há worker server-side, Python, whisper nem TTS — tudo isso foi removido. Stack:
+> **ATUALIZAÇÃO (arquitetura híbrida):** as abas **Áudio** e **Vídeo** agora
+> rodam **server-side** (upload → fila → worker Python → download), usando o
+> motor adversarial de `audio-encryption-poc/`. FFmpeg no navegador não engana
+> ASR moderno. As abas **Imagem** e **Metadados** continuam **client-side**.
+> Visão completa da fila/worker/deploy em `.agents/PROJECT-CONTEXT.md`
+> (seção "Camuflagem server-side híbrida"). A documentação client-side abaixo
+> permanece válida para Imagem/Metadados e como histórico do pipeline antigo de
+> áudio/vídeo no navegador.
 
-- **FFmpeg WASM** (`@ffmpeg/ffmpeg` + `@ffmpeg/core` single-thread) → áudio e metadados. Binários em `public/ffmpeg/ffmpeg-core.{js,wasm}` (servidos em `/ffmpeg`). Single-thread **de propósito**: não exige headers COOP/COEP (sem `SharedArrayBuffer`).
-- **Canvas + MediaRecorder** → camuflagem visual de vídeo.
-- **Canvas** → camuflagem de imagem.
+Stack atual:
+
+- **Server-side (Áudio/Vídeo):** fila `camouflage_jobs` (Supabase) + worker
+  `scripts/camouflage-worker.ts` (PM2) que chama `python -m audio_poc.cli`
+  (`cloak` para vídeo, `cloak-audio` para áudio). Modos `fast` (CPU) e `max`
+  (PGD Whisper). Storage em disco via `CAMOUFLAGE_STORAGE_DIR`.
+- **Client-side (Imagem/Metadados):** **FFmpeg WASM** (`@ffmpeg/ffmpeg` +
+  `@ffmpeg/core` single-thread) e **Canvas**.
 
 Objetivo central: **imperceptível pro humano, mas embaralha a impressão digital pra máquinas** (fingerprint de hash, transcrição automática ASR/Gemini/Whisper). Inspirado no maskai.co.
+
+### Arquivos server-side (Áudio/Vídeo)
+
+| Arquivo | Papel |
+|---|---|
+| `lib/camouflage/jobs-config.ts` | Tipos/limites/presets isomórficos (`WHITE_SCRIPT_PRESETS` → `--target-preset`, `mapJobRow`) |
+| `lib/camouflage/server/storage.ts` | Salvar input / ler output / cleanup TTL via `CAMOUFLAGE_STORAGE_DIR` |
+| `app/api/camouflage/jobs/route.ts` | `POST` (upload+enfileira) e `GET` (lista do dono) |
+| `app/api/camouflage/jobs/[id]/route.ts` | `GET` status (poll) e `DELETE` |
+| `app/api/camouflage/jobs/[id]/download/route.ts` | Stream do output (checa dono) |
+| `lib/camouflage/client/server-jobs.ts` | Hook `useServerJobs` (upload + poll + remove) |
+| `scripts/camouflage-worker.ts` | Worker PM2: `claim_camouflage_job()` → spawn Python → progresso → status |
+| `audio-encryption-poc/.../cloak/audio_only.py` | `cloak_audio()` (áudio-only) reusando as camadas do composer |
 
 ## Arquivos
 

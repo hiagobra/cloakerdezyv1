@@ -1,76 +1,79 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { camouflageAudio, type AudioMode } from "@/lib/camouflage/client/audio";
-import { useCamouflageQueue } from "@/lib/camouflage/client/queue";
-import { trackCamouflage, useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
-import { CamoResult, Dropzone, JobList, ModeSelector, SectionCard, WhiteCopyPicker, getDefaultWhiteCopy } from "./shared";
+import { useState } from "react";
+import { useServerJobs } from "@/lib/camouflage/client/server-jobs";
+import { useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
+import {
+  WHITE_SCRIPT_PRESETS,
+  DEFAULT_TARGET_PRESET,
+  MODE_HINT,
+  detectKind,
+  type JobMode,
+} from "@/lib/camouflage/jobs-config";
+import { Dropzone, ModeSelector, SectionCard, ServerJobList, TargetPresetPicker } from "./shared";
 
-const MODES: { value: AudioMode; label: string; desc: string }[] = [
-  { value: "leve", label: "Leve", desc: "Imperceptível: jitter + pitch sutil + poison HF." },
-  { value: "maximo", label: "Máximo (anti-IA)", desc: "Copia white imperceptível + voz real com pistas de ASR destruídas." },
+const MODES: { value: JobMode; label: string; desc: string }[] = [
+  { value: "fast", label: "Rápido", desc: "CPU rápido. Desloca o tópico que a IA percebe." },
+  { value: "max", label: "Máximo (anti-IA)", desc: "Adversarial no Whisper: transcrição vira lixo. Mais lento." },
 ];
 
 export function AudioSection() {
-  const [mode, setMode] = useState<AudioMode>("maximo");
-  const [whiteCopy, setWhiteCopy] = useState<File | null>(null);
-  const queue = useCamouflageQueue<CamoResult>(3);
+  const [mode, setMode] = useState<JobMode>("fast");
+  const [preset, setPreset] = useState<string>(DEFAULT_TARGET_PRESET);
+  const { jobs, error, uploading, hasActive, uploadFiles, removeJob, clearFinished } = useServerJobs();
+  const audioJobs = jobs.filter((j) => j.kind === "audio");
 
-  useBeforeUnloadGuard(queue.activeCount > 0);
+  useBeforeUnloadGuard(uploading);
 
-  useEffect(() => {
-    queue.onComplete(() => trackCamouflage("audio"));
-  }, [queue]);
-
-  const onFiles = async (files: File[]) => {
-    const valid = files.filter(
-      (f) => f.type.startsWith("audio/") || f.type.startsWith("video/") || /\.(mp3|wav|m4a|aac|ogg|mp4|mov|webm|avi|mkv)$/i.test(f.name),
-    );
+  const onFiles = (files: File[]) => {
+    const valid = files.filter((f) => detectKind(f.name, f.type) === "audio");
     if (valid.length === 0) return;
-    // No máximo, garante uma copia white (genérica, se o usuário não escolheu).
-    const white = whiteCopy ?? (mode === "maximo" ? await getDefaultWhiteCopy() : null);
-    queue.enqueue(
-      valid.map((file) => ({
-        fileName: file.name,
-        run: async (onProgress) => {
-          const res = await camouflageAudio(file, mode, (m) => onProgress(m), white);
-          return { blob: res.blob, outputName: res.outputName };
-        },
-      })),
-    );
+    void uploadFiles(valid, { mode, targetPreset: preset });
   };
 
   return (
     <SectionCard
       title="Camuflagem de áudio"
-      description="Camuflagem multicamada (timing jitter, pitch sutil, mascaramento pink/brown, poison HF 14-18kHz e, no máximo, camada reversa anti-transcrição). Com uma copia white, sobrepõe uma fala limpa que a IA transcreve no lugar da real (nível maskai). Funciona em áudios e vídeos (re-codifica só o áudio)."
+      description="O áudio é processado no servidor: uma fala-alvo (TTS) entra por baixo, palavras-chave do tópico são injetadas e a faixa é tratada para confundir transcritores. No modo Máximo, um ataque adversarial no Whisper deixa a transcrição como lixo — mantendo o áudio quase imperceptível pro ouvido."
     >
       <div className="flex flex-wrap items-center gap-4">
         <ModeSelector value={mode} options={MODES} onChange={setMode} />
-        <WhiteCopyPicker file={whiteCopy} onPick={setWhiteCopy} onClear={() => setWhiteCopy(null)} />
       </div>
 
-      {mode === "maximo" ? (
-        <p className="mt-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-strong">
-          {whiteCopy ? (
-            <>A IA de transcrição vai ler <strong className="text-foreground">{whiteCopy.name}</strong> no lugar da fala real.</>
-          ) : (
-            <>Sem escolher uma copia, usamos a <strong className="text-foreground">genérica</strong> automaticamente.</>
-          )}{" "}
-          A copia entra num murmúrio imperceptível pro ouvido e a voz real fica com as pistas de transcrição (consoantes) destruídas.
-        </p>
+      <div className="mt-4">
+        <TargetPresetPicker presets={WHITE_SCRIPT_PRESETS} value={preset} onChange={setPreset} />
+      </div>
+
+      <p className="mt-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-strong">
+        {MODE_HINT[mode]} A IA tende a transcrever/perceber o tópico{" "}
+        <strong className="text-foreground">
+          {WHITE_SCRIPT_PRESETS.find((p) => p.id === preset)?.label}
+        </strong>{" "}
+        no lugar da fala real.
+      </p>
+
+      {error ? (
+        <p className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-300">{error}</p>
       ) : null}
 
       <div className="mt-5">
         <Dropzone
-          accept="audio/*,video/*"
+          accept="audio/*"
           onFiles={onFiles}
-          label="Solte áudios ou vídeos aqui"
-          hint="MP3, WAV, M4A ou vídeos (camufla a faixa de áudio). Até 3 ao mesmo tempo."
+          label="Solte áudios aqui ou clique para selecionar"
+          hint="MP3, WAV, M4A, AAC ou OGG. O processamento roda no servidor — você pode acompanhar a fila abaixo."
         />
       </div>
 
-      <JobList jobs={queue.jobs} onRemove={queue.remove} onClearFinished={queue.clearFinished} />
+      {uploading ? <p className="mt-3 text-xs text-muted">Enviando arquivo(s)...</p> : null}
+
+      <ServerJobList jobs={audioJobs} onRemove={removeJob} onClearFinished={clearFinished} />
+
+      {hasActive ? (
+        <p className="mt-3 text-xs text-muted">
+          Os jobs continuam processando no servidor mesmo se você fechar a aba.
+        </p>
+      ) : null}
     </SectionCard>
   );
 }

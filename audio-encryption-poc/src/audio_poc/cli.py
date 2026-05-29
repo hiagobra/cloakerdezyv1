@@ -158,6 +158,38 @@ def _cmd_verify_cloak(args: argparse.Namespace) -> None:
         raise SystemExit(f"backend desconhecido: {args.backend}")
 
 
+def _cmd_cloak_audio(args: argparse.Namespace) -> None:
+    """Audio-only cloak (fast=CPU sem torch, max=PGD Whisper).
+
+    Emite linhas ``PROGRESS <pct> <msg>`` no stdout para o worker acompanhar e,
+    no fim, um JSON com os layers aplicados.
+    """
+    from .cloak.audio_only import cloak_audio
+
+    def _prog(pct: int, msg: str) -> None:
+        print(f"PROGRESS {pct} {msg}", flush=True)
+
+    res = cloak_audio(
+        input_path=args.input,
+        output_path=args.output,
+        target_preset=args.target_preset,
+        mode=args.mode,
+        whisper_model=args.whisper_model,
+        whisper_iters=args.whisper_iters,
+        progress=_prog,
+    )
+    print(
+        json.dumps(
+            {
+                "output": str(res.output_path),
+                "layers_applied": res.layers_applied,
+                "metrics": res.metrics,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 def _cmd_cloak_audio_art(args: argparse.Namespace) -> None:
     """Opt-in: run ART's ImperceptibleASRPyTorch on a single audio file.
 
@@ -537,6 +569,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Recompute even if a cached PNG already exists.",
     )
     p_pre.set_defaults(func=_cmd_precompute_patches)
+
+    p_cloak_audio = sub.add_parser(
+        "cloak-audio",
+        help=(
+            "Cloak de AUDIO puro (sem video). fast=CPU/sem torch (TTS underlay + "
+            "injection bed + DSP + psico); max=PGD Whisper (precisa de [whisper])."
+        ),
+    )
+    p_cloak_audio.add_argument("--input", required=True)
+    p_cloak_audio.add_argument("--output", required=True)
+    p_cloak_audio.add_argument("--target-preset", required=True, choices=list_targets())
+    p_cloak_audio.add_argument("--mode", choices=["fast", "max"], default="fast")
+    p_cloak_audio.add_argument("--whisper-model", default="tiny")
+    p_cloak_audio.add_argument("--whisper-iters", type=int, default=80)
+    p_cloak_audio.set_defaults(func=_cmd_cloak_audio)
 
     p_art = sub.add_parser(
         "cloak-audio-art",

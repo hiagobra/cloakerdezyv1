@@ -3,6 +3,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import type { QueueJob } from "@/lib/camouflage/client/queue";
 import { downloadBlob } from "@/lib/camouflage/client/track";
+import type { ServerJob } from "@/lib/camouflage/jobs-config";
 
 export interface CamoResult {
   blob: Blob;
@@ -219,6 +220,150 @@ export function JobList({
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Server job list (fila server-side: upload -> poll -> download)
+// ============================================================
+
+const SERVER_STATUS_STYLES: Record<ServerJob["status"], string> = {
+  queued: "bg-card-soft text-muted",
+  processing: "bg-amber-500/15 text-amber-300",
+  done: "bg-primary/15 text-primary",
+  error: "bg-red-500/15 text-red-300",
+};
+
+const SERVER_STATUS_LABEL: Record<ServerJob["status"], string> = {
+  queued: "Na fila",
+  processing: "Processando",
+  done: "Pronto",
+  error: "Erro",
+};
+
+export function ServerJobList({
+  jobs,
+  onRemove,
+  onClearFinished,
+}: {
+  jobs: ServerJob[];
+  onRemove: (id: string) => void;
+  onClearFinished: () => void;
+}) {
+  if (jobs.length === 0) return null;
+
+  const hasFinished = jobs.some((j) => j.status === "done" || j.status === "error");
+
+  return (
+    <div className="mt-6">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-xs uppercase tracking-[0.18em] text-muted">Fila ({jobs.length})</h3>
+        {hasFinished ? (
+          <button type="button" onClick={onClearFinished} className="text-xs text-muted hover:text-foreground">
+            Limpar concluídos
+          </button>
+        ) : null}
+      </div>
+      <div className="flex flex-col gap-2.5">
+        {jobs.map((job) => (
+          <div key={job.id} className="surface-panel-soft flex items-center gap-4 p-3.5">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-card text-muted">
+              {job.kind === "video" ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="m23 7-7 5 7 5V7zM1 5h15v14H1z" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM21 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
+                </svg>
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <p className="truncate text-sm font-medium text-foreground">{job.inputName}</p>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${SERVER_STATUS_STYLES[job.status]}`}>
+                  {SERVER_STATUS_LABEL[job.status]}
+                </span>
+                {job.mode === "max" ? (
+                  <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                    Máximo
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-0.5 truncate text-xs text-muted">{job.error || job.message || ""}</p>
+              {job.status === "processing" || job.status === "queued" ? (
+                <div className="mt-2 h-1 overflow-hidden rounded-full bg-border-soft">
+                  <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(4, job.progress)}%` }} />
+                </div>
+              ) : null}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              {job.status === "done" ? (
+                <a
+                  href={`/api/camouflage/jobs/${job.id}/download`}
+                  className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition hover:bg-primary-strong"
+                >
+                  Baixar
+                </a>
+              ) : null}
+              {job.status !== "processing" ? (
+                <button
+                  type="button"
+                  onClick={() => onRemove(job.id)}
+                  className="text-muted transition hover:text-foreground"
+                  aria-label="Remover"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// White script / topic picker (server-side, mapeia pra --target-preset)
+// ============================================================
+
+export function TargetPresetPicker({
+  presets,
+  value,
+  onChange,
+}: {
+  presets: { id: string; label: string }[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-xs uppercase tracking-[0.18em] text-muted">Tópico que a IA vai &quot;ouvir&quot;</span>
+      <div className="flex flex-wrap gap-2">
+        {presets.map((preset) => {
+          const active = value === preset.id;
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => onChange(preset.id)}
+              className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition ${
+                active
+                  ? "border-primary bg-primary/15 text-primary"
+                  : "border-border-strong text-foreground hover:border-primary/50"
+              }`}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

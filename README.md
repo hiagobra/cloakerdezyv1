@@ -22,10 +22,16 @@ diferente do real:
 3. **Track**: faixa de legenda SRT injetada como soft subtitle + metadata MP4 (title/comment/keywords).
 4. **Verify**: re-classificação via Whisper/YAMNet local ou via Gemini API (`google-generativeai`).
 
+As abas **Áudio** e **Vídeo** do dashboard rodam **server-side**: o usuário faz
+upload, o job entra na fila (`camouflage_jobs`), o worker (`scripts/camouflage-worker.ts`,
+PM2) executa o pipeline Python e o resultado fica disponível para download.
+(Imagem/Metadados continuam client-side.) Detalhes de fila/worker/deploy em
+`.agents/PROJECT-CONTEXT.md`.
+
 O dashboard expõe duas dimensões:
 
-- **Intensidade** (`leve` / `medio` / `forte` -> profile `minimal` / `standard` / `aggressive`).
-- **Tópico-alvo** (financas_pt, tecnologia_pt, culinaria_pt, finance_en, fitness_en).
+- **Modo** (`Rápido` → profile `standard` / `cloak-audio --mode fast`, CPU; `Máximo` → profile `aggressive` / `cloak-audio --mode max`, PGD Whisper).
+- **Tópico-alvo** (`--target-preset`: financas_pt, marketing_pt, saude_pt, nutricao_pt, motivacional_pt, tecnologia_pt, culinaria_pt, educacao_infantil_pt).
 
 **Expectativa realista:** não existe “100% invisível para qualquer máquina”. O que a
 stack faz é **empilhar sinais fortes do tópico-alvo** (texto em frame, legenda,

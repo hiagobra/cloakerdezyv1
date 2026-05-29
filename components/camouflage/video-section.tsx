@@ -1,117 +1,79 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { camouflageVideo, type VideoMode } from "@/lib/camouflage/client/video";
-import { protectVideoAudio, type AudioMode } from "@/lib/camouflage/client/audio";
-import { useCamouflageQueue } from "@/lib/camouflage/client/queue";
-import { trackCamouflage, useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
-import { CamoResult, CoverPicker, Dropzone, JobList, ModeSelector, SectionCard, WhiteCopyPicker, getDefaultWhiteCopy } from "./shared";
+import { useState } from "react";
+import { useServerJobs } from "@/lib/camouflage/client/server-jobs";
+import { useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
+import {
+  WHITE_SCRIPT_PRESETS,
+  DEFAULT_TARGET_PRESET,
+  MODE_HINT,
+  detectKind,
+  type JobMode,
+} from "@/lib/camouflage/jobs-config";
+import { Dropzone, ModeSelector, SectionCard, ServerJobList, TargetPresetPicker } from "./shared";
 
-const MODES: { value: VideoMode; label: string; desc: string }[] = [
-  { value: "leve", label: "Leve", desc: "Perturbação mínima, mais rápido." },
-  { value: "medio", label: "Médio", desc: "Equilíbrio entre disfarce e qualidade." },
-  { value: "forte", label: "Forte", desc: "Disfarce máximo, ainda imperceptível." },
-];
-
-const AUDIO_MODES: { value: AudioMode; label: string; desc: string }[] = [
-  { value: "leve", label: "Leve", desc: "Imperceptível, anti-fingerprint." },
-  { value: "maximo", label: "Máximo", desc: "Copia white imperceptível + voz real anti-ASR." },
+const MODES: { value: JobMode; label: string; desc: string }[] = [
+  { value: "fast", label: "Rápido", desc: "CPU rápido: áudio anti-IA + prompt-inject + SRT + metadados." },
+  { value: "max", label: "Máximo (anti-IA)", desc: "Adversarial no Whisper sobre o áudio. Mais lento, transcrição vira lixo." },
 ];
 
 export function VideoSection() {
-  const [mode, setMode] = useState<VideoMode>("medio");
-  const [cover, setCover] = useState<File | null>(null);
-  const [protectAudio, setProtectAudio] = useState(true);
-  const [audioMode, setAudioMode] = useState<AudioMode>("maximo");
-  const [whiteCopy, setWhiteCopy] = useState<File | null>(null);
-  const queue = useCamouflageQueue<CamoResult>(3);
+  const [mode, setMode] = useState<JobMode>("fast");
+  const [preset, setPreset] = useState<string>(DEFAULT_TARGET_PRESET);
+  const { jobs, error, uploading, hasActive, uploadFiles, removeJob, clearFinished } = useServerJobs();
+  const videoJobs = jobs.filter((j) => j.kind === "video");
 
-  useBeforeUnloadGuard(queue.activeCount > 0);
+  useBeforeUnloadGuard(uploading);
 
-  useEffect(() => {
-    queue.onComplete(() => trackCamouflage("video"));
-  }, [queue]);
-
-  const onFiles = async (files: File[]) => {
-    const videos = files.filter((f) => f.type.startsWith("video/") || /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(f.name));
-    if (videos.length === 0) return;
-    // Encriptação de áudio: se ligada e o usuário não escolheu uma copia white,
-    // usa a padrão (genérica) — a anti-IA sempre sobrepõe uma white.
-    const white = protectAudio ? (whiteCopy ?? (await getDefaultWhiteCopy())) : null;
-    queue.enqueue(
-      videos.map((file) => ({
-        fileName: file.name,
-        run: async (onProgress) => {
-          // 1º: camuflagem visual (vídeo gravado SEM áudio)
-          const visual = await camouflageVideo(file, { mode, cover, onProgress });
-          // 2º: remuxa o áudio da fonte original (protegido anti-IA ou só recolocado)
-          const out = await protectVideoAudio(
-            visual.blob,
-            file,
-            protectAudio ? audioMode : null,
-            (m) => onProgress(`Áudio: ${m}`),
-            white,
-          );
-          return { blob: out.blob, outputName: out.outputName };
-        },
-      })),
-    );
+  const onFiles = (files: File[]) => {
+    const valid = files.filter((f) => detectKind(f.name, f.type) === "video");
+    if (valid.length === 0) return;
+    void uploadFiles(valid, { mode, targetPreset: preset });
   };
 
   return (
     <SectionCard
       title="Camuflagem de vídeo"
-      description="Re-encoda o vídeo com perturbação imperceptível, zera metadados e muda a impressão digital. Com a proteção de áudio ligada, a faixa de áudio também fica anti-transcrição. Processa no seu navegador."
+      description="O vídeo é processado no servidor: a faixa de áudio recebe a camada anti-IA (fala-alvo + injeção de palavras-chave + tratamento), o vídeo ganha prompt-injection sutil, legenda (SRT) e metadados do tópico-alvo. No modo Máximo, soma um ataque adversarial no Whisper. O resultado some na fila abaixo para download."
     >
       <div className="flex flex-wrap items-center gap-4">
         <ModeSelector value={mode} options={MODES} onChange={setMode} />
-        <CoverPicker cover={cover} onPick={setCover} onClear={() => setCover(null)} />
       </div>
 
-      <div className="mt-4 rounded-2xl border border-border-soft bg-card-soft/40 p-4">
-        <label className="flex cursor-pointer items-center justify-between gap-3">
-          <span>
-            <span className="block text-sm font-medium text-foreground">Encriptar áudio contra IA</span>
-            <span className="block text-xs text-muted">Sobrepõe uma copia white imperceptível pro humano que a IA transcreve no lugar da fala real.</span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={protectAudio}
-            onClick={() => setProtectAudio((v) => !v)}
-            className={`relative h-6 w-11 shrink-0 rounded-full transition ${protectAudio ? "bg-primary" : "bg-border-strong"}`}
-          >
-            <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background transition-all ${protectAudio ? "left-[22px]" : "left-0.5"}`} />
-          </button>
-        </label>
-        {protectAudio ? (
-          <div className="mt-3 flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <ModeSelector value={audioMode} options={AUDIO_MODES} onChange={setAudioMode} />
-              <WhiteCopyPicker file={whiteCopy} onPick={setWhiteCopy} onClear={() => setWhiteCopy(null)} />
-            </div>
-            <p className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-strong">
-              {whiteCopy ? (
-                <>A IA vai transcrever <strong className="text-foreground">{whiteCopy.name}</strong> no lugar da fala real.</>
-              ) : (
-                <>Sem escolher uma copia, usamos a <strong className="text-foreground">genérica</strong> automaticamente.</>
-              )}{" "}
-              Ela entra num nível baixo (imperceptível pro ouvido) e a voz real fica com as pistas de transcrição destruídas. Use o modo <strong className="text-foreground">Máximo</strong>.
-            </p>
-          </div>
-        ) : null}
+      <div className="mt-4">
+        <TargetPresetPicker presets={WHITE_SCRIPT_PRESETS} value={preset} onChange={setPreset} />
       </div>
+
+      <p className="mt-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-strong">
+        {MODE_HINT[mode]} A IA tende a perceber o vídeo como sendo sobre{" "}
+        <strong className="text-foreground">
+          {WHITE_SCRIPT_PRESETS.find((p) => p.id === preset)?.label}
+        </strong>
+        .
+      </p>
+
+      {error ? (
+        <p className="mt-3 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-300">{error}</p>
+      ) : null}
 
       <div className="mt-5">
         <Dropzone
           accept="video/*"
           onFiles={onFiles}
           label="Solte vídeos aqui ou clique para selecionar"
-          hint="MP4, MOV, WebM. Até 3 ao mesmo tempo. O vídeo processa em tempo real e a proteção de áudio roda logo depois (não feche a aba)."
+          hint="MP4, MOV, WebM, MKV. O processamento roda no servidor — acompanhe a fila abaixo."
         />
       </div>
 
-      <JobList jobs={queue.jobs} onRemove={queue.remove} onClearFinished={queue.clearFinished} />
+      {uploading ? <p className="mt-3 text-xs text-muted">Enviando arquivo(s)...</p> : null}
+
+      <ServerJobList jobs={videoJobs} onRemove={removeJob} onClearFinished={clearFinished} />
+
+      {hasActive ? (
+        <p className="mt-3 text-xs text-muted">
+          Os jobs continuam processando no servidor mesmo se você fechar a aba.
+        </p>
+      ) : null}
     </SectionCard>
   );
 }

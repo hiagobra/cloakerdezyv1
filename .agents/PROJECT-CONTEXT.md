@@ -241,6 +241,67 @@ O app valida origem dinamicamente (`lib/security/request-guard.ts`: `origin.host
 
 ---
 
+## Camuflagem server-side híbrida (fila + worker Python)
+
+> A camuflagem de **Áudio** e **Vídeo** saiu do navegador e virou um pipeline
+> server-side (upload → fila → worker Python → download). FFmpeg no navegador
+> não engana ASR moderno; o motor real é o `audio-encryption-poc/`.
+> As abas **Imagem/Metadados continuam client-side** (não precisam de ML).
+
+### Fluxo
+
+1. UI faz `POST /api/camouflage/jobs` (multipart) → grava input em disco e cria job `queued`.
+2. UI faz poll de `GET /api/camouflage/jobs` (lista) enquanto houver job ativo.
+3. Worker (`scripts/camouflage-worker.ts`, sob PM2) chama o RPC `claim_camouflage_job()` (atômico, `FOR UPDATE SKIP LOCKED`), roda o Python, atualiza progresso/status.
+4. UI baixa via `GET /api/camouflage/jobs/[id]/download` (rota fora do guard de auth do middleware — ela própria checa o dono).
+
+### Modos (híbrido)
+
+- **Rápido (`fast`, default, CPU sem torch):** vídeo → `cloak --profile standard`; áudio → `cloak-audio --mode fast` (TTS underlay + injection bed + DSP + psicoacústica). ~segundos/arquivo. Desloca o "tópico" que a IA percebe.
+- **Máximo (`max`, opt-in, fila lenta):** vídeo → `cloak --profile aggressive` (Whisper-tiny PGD); áudio → `cloak-audio --mode max` (PGD Whisper). Imperceptível + transcrição vira lixo. Minutos/arquivo na CPU; precisa de torch+whisper.
+
+O **tópico-alvo** (`--target-preset`) é escolhido na UI (`WHITE_SCRIPT_PRESETS` em `lib/camouflage/jobs-config.ts`, casa 1:1 com `TOPIC_TARGETS` em `audio_poc.cloak.targets`).
+
+### Banco
+
+- Tabela `public.camouflage_jobs` + RLS (dono lê/insere/deleta os próprios) + RPC `claim_camouflage_job()` (SECURITY DEFINER, só `service_role` executa). Tudo em `supabase/schema.sql`.
+- Aplicar (rodar o `schema.sql` no SQL Editor do Supabase, ou via CLI linkada). É idempotente (`if not exists` / `create or replace`).
+
+### Envs novas (VPS)
+
+- `CAMOUFLAGE_STORAGE_DIR` — diretório de input/output por job (ex.: `/tmp/cloakerdezy-storage`). Default: `os.tmpdir()/cloakerdezy-storage`.
+- `AUDIO_POC_DIR` — caminho do `audio-encryption-poc` (default `audio-encryption-poc`).
+- `AUDIO_POC_PYTHON` — python do venv (ex.: `audio-encryption-poc/.venv/bin/python`).
+- (já existentes) `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` — o worker usa service role.
+
+### Deploy do worker (PM2)
+
+```bash
+# 1) dependências de sistema
+apt install -y ffmpeg espeak-ng
+
+# 2) venv do pipeline Python
+cd /var/www/cloakerdzy/audio-encryption-poc
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e .
+pip install -e ".[whisper]"     # SÓ se for usar o modo Máximo (baixa torch+whisper, ~GB)
+deactivate
+
+# 3) subir o worker além do app
+cd /var/www/cloakerdzy
+pm2 start npm --name cloakerdezy-worker -- run worker:camouflage
+pm2 save
+pm2 logs cloakerdezy-worker --lines 30   # deve logar "[worker] iniciado. Aguardando jobs..."
+```
+
+O worker lê `.env.local`/`.env` do `cwd`. Garanta que as envs acima estejam lá
+(ou passe via `pm2 start ... --env`). Concorrência 1 no v1; VPS é CPU-only, então
+o modo Máximo é fila lenta (minutos/arquivo). GPU depois acelera ~10x.
+
+---
+
 ## Problemas conhecidos / armadilhas
 
 1. **Site mostra versão antiga (login CloakerDezy):** código não atualizado na pasta REAL do PM2. Veja armadilhas 7-9 abaixo, todas dão esse sintoma.

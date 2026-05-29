@@ -163,3 +163,107 @@ using ((select auth.uid()) = user_id);
 
 -- Leitura agregada (total da plataforma) e feita pelo backend com Service Role,
 -- que bypassa RLS - nao expomos contagem global para clientes.
+
+-- ============================================================
+-- camouflage_jobs: fila de processamento server-side.
+-- O cliente faz upload (cria job 'queued'), o worker dedicado (Service Role)
+-- pega 1 job atomico via claim_camouflage_job(), roda o pipeline Python e
+-- atualiza status/output. O cliente faz poll e baixa o resultado.
+-- ============================================================
+
+create table if not exists public.camouflage_jobs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  kind text not null check (kind in ('audio', 'video')),
+  mode text not null default 'fast' check (mode in ('fast', 'max')),
+  target_preset text,
+  status text not null default 'queued'
+    check (status in ('queued', 'processing', 'done', 'error')),
+  progress int not null default 0,
+  message text,
+  input_path text not null,
+  input_name text not null,
+  output_path text,
+  output_name text,
+  error text,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  started_at timestamptz,
+  finished_at timestamptz
+);
+
+create index if not exists camouflage_jobs_user_idx on public.camouflage_jobs (user_id);
+create index if not exists camouflage_jobs_status_idx on public.camouflage_jobs (status);
+create index if not exists camouflage_jobs_created_idx on public.camouflage_jobs (created_at);
+
+drop trigger if exists camouflage_jobs_set_updated_at on public.camouflage_jobs;
+create trigger camouflage_jobs_set_updated_at
+before update on public.camouflage_jobs
+for each row
+execute function public.handle_updated_at();
+
+alter table public.camouflage_jobs enable row level security;
+
+drop policy if exists "users_insert_own_jobs" on public.camouflage_jobs;
+create policy "users_insert_own_jobs"
+on public.camouflage_jobs
+for insert
+to authenticated
+with check ((select auth.uid()) = user_id);
+
+drop policy if exists "users_view_own_jobs" on public.camouflage_jobs;
+create policy "users_view_own_jobs"
+on public.camouflage_jobs
+for select
+to authenticated
+using ((select auth.uid()) = user_id);
+
+drop policy if exists "users_delete_own_jobs" on public.camouflage_jobs;
+create policy "users_delete_own_jobs"
+on public.camouflage_jobs
+for delete
+to authenticated
+using ((select auth.uid()) = user_id);
+
+-- Atualizacao de status/output/progress e feita SOMENTE pelo worker via Service
+-- Role (bypassa RLS). Por isso nao criamos policy de update para clientes.
+
+-- claim_camouflage_job(): pega o job 'queued' mais antigo e marca como
+-- 'processing' de forma atomica (FOR UPDATE SKIP LOCKED), evitando que dois
+-- workers peguem o mesmo job. Retorna o job reivindicado ou NULL se a fila
+-- estiver vazia. So o Service Role pode executar.
+create or replace function public.claim_camouflage_job()
+returns public.camouflage_jobs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  claimed public.camouflage_jobs;
+begin
+  select * into claimed
+  from public.camouflage_jobs
+  where status = 'queued'
+  order by created_at
+  for update skip locked
+  limit 1;
+
+  if not found then
+    return null;
+  end if;
+
+  update public.camouflage_jobs
+  set status = 'processing',
+      started_at = timezone('utc', now()),
+      updated_at = timezone('utc', now())
+  where id = claimed.id
+  returning * into claimed;
+
+  return claimed;
+end;
+$$;
+
+revoke execute on function public.claim_camouflage_job() from public;
+revoke execute on function public.claim_camouflage_job() from anon;
+revoke execute on function public.claim_camouflage_job() from authenticated;
+grant execute on function public.claim_camouflage_job() to service_role;

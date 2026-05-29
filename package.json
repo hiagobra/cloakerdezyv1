@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "worker:camouflage": "tsx scripts/camouflage-worker.ts",
     "lint": "eslint",
     "supabase": "supabase",
     "supabase:login": "supabase login",
