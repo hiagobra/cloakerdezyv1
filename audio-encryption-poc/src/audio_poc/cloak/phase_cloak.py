@@ -173,6 +173,13 @@ def _encode_audio(src_wav: Path, dst: Path) -> None:
 
 
 def _remux_phase_into_video(video_src: Path, audio_wav: Path, dst: Path) -> None:
+    """Remuxa o audio anti-fase no video original.
+
+    NAO usa ``-shortest``: alguns criativos tem o stream de video mais curto que
+    o audio (ex.: end-card congelado com locucao continuando). ``-shortest``
+    cortaria no fim do video e perderia segundos de audio. Igual ao Maskai,
+    preservamos a duracao total do audio e o player segura o ultimo frame.
+    """
     dst.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(
         [
@@ -183,7 +190,7 @@ def _remux_phase_into_video(video_src: Path, audio_wav: Path, dst: Path) -> None
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "256k", "-ac", "2",
             "-map_metadata", "-1", "-movflags", "+faststart",
-            "-shortest", str(dst),
+            str(dst),
         ]
     )
 
