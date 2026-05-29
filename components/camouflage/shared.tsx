@@ -228,40 +228,95 @@ export function JobList({
 // Optional cover picker
 // ============================================================
 
+export const WHITE_COPY_PRESETS: { id: string; label: string; file: string }[] = [
+  { id: "renda-extra", label: "Renda extra", file: "/camouflage/whitecopy/renda-extra.mp3" },
+  { id: "emagrecimento", label: "Saude / peso", file: "/camouflage/whitecopy/emagrecimento.mp3" },
+  { id: "prosperidade", label: "Prosperidade", file: "/camouflage/whitecopy/prosperidade.mp3" },
+  { id: "generico", label: "Generico", file: "/camouflage/whitecopy/generico.mp3" },
+];
+
+async function fetchPresetFile(preset: { id: string; file: string }): Promise<File> {
+  const res = await fetch(preset.file);
+  if (!res.ok) throw new Error(`Falha ao carregar copia white (${res.status})`);
+  const blob = await res.blob();
+  return new File([blob], `${preset.id}.mp3`, { type: "audio/mpeg" });
+}
+
 export function WhiteCopyPicker({ file, onPick, onClear }: { file: File | null; onPick: (f: File) => void; onClear: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handlePreset = async (preset: { id: string; label: string; file: string }) => {
+    setError(null);
+    setLoadingId(preset.id);
+    try {
+      const f = await fetchPresetFile(preset);
+      onPick(f);
+    } catch {
+      setError("Nao foi possivel carregar essa copia white.");
+    } finally {
+      setLoadingId(null);
+    }
+  };
 
   return (
-    <div className="flex items-center gap-3">
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        className="flex items-center gap-2 rounded-full border border-border-strong px-4 py-2 text-sm text-foreground transition hover:border-primary/50"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M12 1v22M8 5v14M4 9v6M16 5v14M20 9v6" />
-        </svg>
-        {file ? "Trocar copia white" : "Copia white (opcional)"}
-      </button>
-      {file ? (
-        <span className="flex items-center gap-2 text-xs text-muted">
-          <span className="max-w-[160px] truncate">{file.name}</span>
-          <button type="button" onClick={onClear} className="hover:text-foreground">
-            remover
-          </button>
-        </span>
-      ) : null}
-      <input
-        ref={inputRef}
-        type="file"
-        accept="audio/*,video/*"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onPick(f);
-          e.target.value = "";
-        }}
-      />
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs uppercase tracking-[0.18em] text-muted">Copias prontas</span>
+        {WHITE_COPY_PRESETS.map((preset) => {
+          const active = file?.name === `${preset.id}.mp3`;
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => handlePreset(preset)}
+              disabled={loadingId !== null}
+              className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
+                active
+                  ? "border-primary bg-primary/15 text-primary"
+                  : "border-border-strong text-foreground hover:border-primary/50"
+              }`}
+            >
+              {loadingId === preset.id ? "Carregando..." : preset.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="flex items-center gap-2 rounded-full border border-border-strong px-4 py-2 text-sm text-foreground transition hover:border-primary/50"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M12 1v22M8 5v14M4 9v6M16 5v14M20 9v6" />
+          </svg>
+          {file ? "Usar meu audio" : "Subir meu audio"}
+        </button>
+        {file ? (
+          <span className="flex items-center gap-2 text-xs text-muted">
+            <span className="max-w-[160px] truncate">{file.name}</span>
+            <button type="button" onClick={onClear} className="hover:text-foreground">
+              remover
+            </button>
+          </span>
+        ) : null}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="audio/*,video/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onPick(f);
+            e.target.value = "";
+          }}
+        />
+      </div>
+
+      {error ? <p className="text-xs text-red-300">{error}</p> : null}
     </div>
   );
 }

@@ -105,6 +105,8 @@ DSP sozinho (reverso/eco/notches) **não engana ASR moderno** (Gemini, AssemblyA
 
 **UI:** `WhiteCopyPicker` (em `shared.tsx`) nas abas **Áudio** e **Vídeo** (dentro de “Proteger áudio contra IA”). Aceita áudio **ou vídeo** como fonte da copia. Aplicada a todos os arquivos da fila. Recomendado com modo **Máximo**.
 
+**Copias prontas (embutidas):** quatro MP3 em `public/camouflage/whitecopy/` (`renda-extra`, `emagrecimento`, `prosperidade`, `generico`) — falas neutras/“white” de ~40s geradas com vozes neurais pt-BR (edge-tts: Francisca/Antonio). O `WhiteCopyPicker` mostra chips de preset que dão `fetch` no MP3 e o convertem em `File`. O usuário ainda pode subir o próprio áudio/vídeo. Pra regenerar: `python -m edge_tts --file <txt> --voice pt-BR-FranciscaNeural --write-media <out.mp3>`.
+
 > Sem copia white o sistema cai no scrambler reverso (DSP), que embaralha mas **não garante** enganar ASR robusto — é esperado a transcrição às vezes sair parecida. A copia white é o que reproduz o resultado do maskai.
 
 ## Camuflagem de IMAGEM e METADADOS
