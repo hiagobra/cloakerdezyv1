@@ -7,8 +7,8 @@ import { trackCamouflage, useBeforeUnloadGuard } from "@/lib/camouflage/client/t
 import { CamoResult, Dropzone, JobList, ModeSelector, SectionCard } from "./shared";
 
 const MODES: { value: AudioMode; label: string; desc: string }[] = [
-  { value: "leve", label: "Leve", desc: "Jitter + pitch sutil + poison HF. Imperceptível." },
-  { value: "forte", label: "Forte", desc: "Adiciona camada reversa anti-ASR + codec laundering." },
+  { value: "leve", label: "Leve", desc: "Imperceptível: jitter + pitch sutil + poison HF." },
+  { value: "maximo", label: "Máximo (anti-IA)", desc: "Nível maskai: camada reversa + eco + notches. IA não transcreve; leve eco audível." },
 ];
 
 export function AudioSection() {

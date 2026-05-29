@@ -2,40 +2,61 @@
 
 import { loadFFmpeg, fetchFile, getFfmpegLog, clearFfmpegLog, parseFFmpegError } from "./ffmpeg";
 
-export type AudioMode = "leve" | "forte";
+export type AudioMode = "leve" | "maximo";
 
 const MAX_BYTES = 150 * 1024 * 1024;
 const SR = 48000;
 
 /**
- * Camuflagem de áudio inspirada no smudge-audio + thorn + Cloaker DSP,
- * portada pra FFmpeg WASM. Tudo IMPERCEPTÍVEL pro ouvido humano, mas
- * embaralha a impressão digital pra máquinas (fingerprint, ASR/transcrição):
+ * Camuflagem de áudio anti-IA (DSP, estilo maskai.co). Tudo no FFmpeg WASM.
  *
- *   - timing jitter: micro variações de tempo por trecho (±%), destroem
- *     fingerprints baseados em timing sem alterar a percepção
- *   - pitch sutil compensado: desloca o voiceprint
- *   - mascaramento pink + brown noise: piso de ruído sub-audível
- *   - poison HF 14-18kHz: ruído inaudível (>16kHz a maioria não ouve) que
- *     suja o espectro de alta frequência usado por hashers
- *   - camada reversa anti-ASR (modo forte): cópia invertida a -18dB, mascarada
- *     pro humano mas envenena transcrição automática
- *   - codec laundering (modo forte): lowpass + acrusher leve, desloca os picos
- *     de espectrograma que detectores usam
+ * - leve:   imperceptível. timing jitter + pitch sutil + mascaramento
+ *           pink/HF. Disfarça fingerprint sem mexer na percepção.
+ * - maximo: nível maskai. Além do acima, mistura uma camada REVERSA + ECO da
+ *           própria voz (scrambler) + notches nas bandas de consoante. O
+ *           downmix mono que a ASR (Whisper/Gemini) usa fica dominado por fala
+ *           reversa/eco não-transcrevível, mas a voz original SOBREVIVE no mono
+ *           (toca em celular) e o humano entende via separação cognitiva.
+ *           Aceita um leve eco audível — é o trade-off pra realmente enganar a IA.
  */
 interface ModeCfg {
-  jitter: number; // 0..1 (0 = off)
-  pitchPercent: number; // ex.: 0.4 → +0.4%
+  monoBase: boolean;
+  jitter: number; // 0..1
+  pitchPercent: number;
+  notches: boolean;
+  scramblerDb: number | null; // null = sem camada reversa
   pinkDb: number; // -100 = off
   brownDb: number;
-  hfDb: number; // poison HF; -100 = off
-  reverseDb: number | null; // null = off
-  launder: number; // 0..1 (0 = off)
+  hfDb: number;
+  launder: number; // 0..1
+  stereoOut: boolean; // força saída estéreo (dual-mono)
 }
 
 const MODES: Record<AudioMode, ModeCfg> = {
-  leve: { jitter: 0.5, pitchPercent: 0.4, pinkDb: -54, brownDb: -100, hfDb: -50, reverseDb: null, launder: 0 },
-  forte: { jitter: 0.85, pitchPercent: 1.0, pinkDb: -48, brownDb: -52, hfDb: -44, reverseDb: -18, launder: 0.25 },
+  leve: {
+    monoBase: false,
+    jitter: 0.5,
+    pitchPercent: 0.4,
+    notches: false,
+    scramblerDb: null,
+    pinkDb: -54,
+    brownDb: -100,
+    hfDb: -50,
+    launder: 0,
+    stereoOut: false,
+  },
+  maximo: {
+    monoBase: true,
+    jitter: 0.4,
+    pitchPercent: 1.0,
+    notches: true,
+    scramblerDb: -6,
+    pinkDb: -48,
+    brownDb: -52,
+    hfDb: -44,
+    launder: 0.2,
+    stereoOut: true,
+  },
 };
 
 function getExtension(filename: string): string {
@@ -66,7 +87,6 @@ function getDurationFromFile(file: File): Promise<number> {
   });
 }
 
-// PRNG determinístico: mesmo input + params → mesma sequência de jitter.
 function makeRand(seed: number): () => number {
   let s = seed | 0;
   return () => {
@@ -85,7 +105,7 @@ function buildJitter(duration: number, intensity: number, src: string, out: stri
   }
   if (n < 2) return `${src}anull${out}`;
 
-  const maxJitter = 0.04 * intensity; // até ±4% por trecho
+  const maxJitter = 0.04 * intensity;
   const rand = makeRand(Math.floor(duration * 1000));
   const splits: string[] = [];
   for (let i = 0; i < n; i++) splits.push(`[c${i}]`);
@@ -105,7 +125,6 @@ function buildJitter(duration: number, intensity: number, src: string, out: stri
 
 interface Graph {
   complex: string;
-  needsReverse: boolean;
   needsPink: boolean;
   needsBrown: boolean;
   needsHf: boolean;
@@ -116,18 +135,10 @@ function buildGraph(cfg: ModeCfg, duration: number): Graph {
   const usePink = cfg.pinkDb > -99;
   const useBrown = cfg.brownDb > -99;
   const useHf = cfg.hfDb > -99;
-  const useReverse = cfg.reverseDb !== null;
-  const useLaunder = cfg.launder > 0.01;
-
-  // alocação de índices de input: 0 main; reverse; pink; brown; hf
-  let idx = 1;
-  const reverseIdx = useReverse ? idx++ : -1;
-  const pinkIdx = usePink ? idx++ : -1;
-  const brownIdx = useBrown ? idx++ : -1;
-  const hfIdx = useHf ? idx++ : -1;
+  const useScrambler = cfg.scramblerDb !== null;
 
   const parts: string[] = [];
-  parts.push(`[0:a]aresample=${SR}[base]`);
+  parts.push(cfg.monoBase ? `[0:a]aresample=${SR},aformat=channel_layouts=mono[base]` : `[0:a]aresample=${SR}[base]`);
   let cur = "[base]";
 
   if (useJitter) {
@@ -135,29 +146,40 @@ function buildGraph(cfg: ModeCfg, duration: number): Graph {
     cur = "[jit]";
   }
 
-  // cadeia linear: declick → pitch → launder
-  const linear: string[] = ["adeclick"];
+  // processamento comum: declick → pitch → launder
+  const proc: string[] = ["adeclick"];
   if (cfg.pitchPercent !== 0) {
     const ratio = 1 + cfg.pitchPercent / 100;
-    const tempo = (1 / ratio).toFixed(6);
-    linear.push(`asetrate=${Math.round(SR * ratio)}`, `aresample=${SR}`, `atempo=${tempo}`);
+    proc.push(`asetrate=${Math.round(SR * ratio)}`, `aresample=${SR}`, `atempo=${(1 / ratio).toFixed(6)}`);
   }
-  if (useLaunder) {
-    const lp = Math.round(20000 - 14000 * cfg.launder); // 20k → ~16k
-    const bits = (16 - 6 * cfg.launder).toFixed(2); // 16 → ~14.5
-    linear.push(`lowpass=f=${lp}`, `acrusher=bits=${bits}:samples=1:mode=lin:level_in=1:level_out=1`);
+  if (cfg.launder > 0.01) {
+    const lp = Math.round(20000 - 14000 * cfg.launder);
+    const bits = (16 - 6 * cfg.launder).toFixed(2);
+    proc.push(`lowpass=f=${lp}`, `acrusher=bits=${bits}:samples=1:mode=lin:level_in=1:level_out=1`);
   }
-  parts.push(`${cur}${linear.join(",")}[lin]`);
-  cur = "[lin]";
+  parts.push(`${cur}${proc.join(",")}[proc]`);
+  cur = "[proc]";
 
-  // camada reversa anti-ASR
-  if (useReverse) {
-    parts.push(`[${reverseIdx}:a]aresample=${SR},areverse,volume=${cfg.reverseDb}dB[rev]`);
-    parts.push(`${cur}[rev]amix=inputs=2:duration=first:normalize=0[vox]`);
-    cur = "[vox]";
+  if (useScrambler) {
+    // deriva a camada reversa+eco da voz processada; aplica notches na voz principal
+    parts.push(`[proc]asplit=2[main][scr]`);
+    const notches = cfg.notches
+      ? ",bandreject=f=1500:width_type=h:w=250,bandreject=f=2800:width_type=h:w=350,bandreject=f=4500:width_type=h:w=450"
+      : "";
+    parts.push(`[main]anull${notches}[voxN]`);
+    parts.push(
+      `[scr]areverse,aecho=in_gain=1:out_gain=0.85:delays=90|180:decays=0.5|0.3,highpass=f=250,lowpass=f=3600,volume=${cfg.scramblerDb}dB[scram]`,
+    );
+    parts.push(`[voxN][scram]amix=inputs=2:duration=first:normalize=0[mix]`);
+    cur = "[mix]";
   }
 
-  // camadas de ruído de mascaramento
+  // alocação de inputs lavfi (após o input 0)
+  let idx = 1;
+  const pinkIdx = usePink ? idx++ : -1;
+  const brownIdx = useBrown ? idx++ : -1;
+  const hfIdx = useHf ? idx++ : -1;
+
   const noise: string[] = [];
   if (usePink) {
     parts.push(`[${pinkIdx}:a]volume=${cfg.pinkDb}dB[nzP]`);
@@ -178,16 +200,10 @@ function buildGraph(cfg: ModeCfg, duration: number): Graph {
     parts.push(`${cur}anull[out]`);
   }
 
-  return {
-    complex: parts.join(";"),
-    needsReverse: useReverse,
-    needsPink: usePink,
-    needsBrown: useBrown,
-    needsHf: useHf,
-  };
+  return { complex: parts.join(";"), needsPink: usePink, needsBrown: useBrown, needsHf: useHf };
 }
 
-function lavfiInput(color: "pink" | "brown" | "white"): string[] {
+function lavfiInput(color: "pink" | "brown"): string[] {
   return ["-f", "lavfi", "-i", `anoisesrc=color=${color}:amplitude=1.0`];
 }
 
@@ -213,35 +229,34 @@ export async function camouflageAudio(
   const outputExt = isVideo ? inputExt : ".mp3";
   const outputFile = `output${outputExt}`;
   const outputName = `${file.name.replace(/\.[^.]+$/, "")}_camuflado${outputExt}`;
+  // webm mantém libopus; mp4/mov usam aac
+  const videoAudioCodec = /\.webm$/i.test(inputExt) ? "libopus" : "aac";
 
   onProgress?.("Analisando arquivo...");
   const duration = await getDurationFromFile(file);
-
   await ffmpeg.writeFile(inputName, await fetchFile(file));
 
-  // ---- tentativa principal: cadeia rica via filter_complex ----
+  // ---- tentativa principal: cadeia anti-IA via filter_complex ----
   try {
     clearFfmpegLog();
-    onProgress?.("Camuflando áudio (multicamada)...");
+    onProgress?.(mode === "maximo" ? "Camuflando áudio (anti-IA)..." : "Camuflando áudio...");
 
     const graph = buildGraph(cfg, duration);
     const inputs: string[] = ["-i", inputName];
-    if (graph.needsReverse) inputs.push("-i", inputName);
     if (graph.needsPink) inputs.push(...lavfiInput("pink"));
     if (graph.needsBrown) inputs.push(...lavfiInput("brown"));
     if (graph.needsHf) inputs.push(...lavfiInput("pink"));
 
+    const channels = cfg.stereoOut ? ["-ac", "2"] : [];
     const fullArgs = isVideo
-      ? [...inputs, "-filter_complex", graph.complex, "-map", "0:v:0", "-map", "[out]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-map_metadata", "-1", "-movflags", "+faststart", "-y", outputFile]
-      : [...inputs, "-filter_complex", graph.complex, "-map", "[out]", "-c:a", "libmp3lame", "-b:a", "192k", "-map_metadata", "-1", "-y", outputFile];
+      ? [...inputs, "-filter_complex", graph.complex, "-map", "0:v:0", "-map", "[out]", "-c:v", "copy", "-c:a", videoAudioCodec, "-b:a", "160k", ...channels, "-map_metadata", "-1", "-movflags", "+faststart", "-y", outputFile]
+      : [...inputs, "-filter_complex", graph.complex, "-map", "[out]", "-c:a", "libmp3lame", "-b:a", "192k", ...channels, "-map_metadata", "-1", "-y", outputFile];
 
     const code = await ffmpeg.exec(fullArgs);
     if (code !== 0) throw new Error(parseFFmpegError(getFfmpegLog()));
 
     const data = await ffmpeg.readFile(outputFile);
-    if (!(data instanceof Uint8Array) || data.length === 0) {
-      throw new Error("Saída vazia.");
-    }
+    if (!(data instanceof Uint8Array) || data.length === 0) throw new Error("Saída vazia.");
     onProgress?.("Finalizando...");
     const blob = new Blob([new Uint8Array(data.buffer as ArrayBuffer)], {
       type: isVideo ? file.type || "video/mp4" : "audio/mpeg",
@@ -255,7 +270,7 @@ export async function camouflageAudio(
     const ratio = 1 + cfg.pitchPercent / 100;
     const simple = `asetrate=${Math.round(SR * ratio)},aresample=${SR},atempo=${(1 / ratio).toFixed(6)}`;
     const args = isVideo
-      ? ["-i", inputName, "-af", simple, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-map_metadata", "-1", "-movflags", "+faststart", "-y", outputFile]
+      ? ["-i", inputName, "-af", simple, "-c:v", "copy", "-c:a", videoAudioCodec, "-b:a", "160k", "-map_metadata", "-1", "-movflags", "+faststart", "-y", outputFile]
       : ["-i", inputName, "-af", simple, "-c:a", "libmp3lame", "-b:a", "192k", "-map_metadata", "-1", "-y", outputFile];
     const code = await ffmpeg.exec(args);
     if (code !== 0) {
