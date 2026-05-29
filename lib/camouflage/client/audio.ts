@@ -313,22 +313,33 @@ function scramblerAf(cfg: ModeCfg): string {
   return `areverse,aecho=in_gain=1:out_gain=0.6:delays=80|160:decays=0.4|0.25,highpass=f=300,lowpass=f=3400,volume=${cfg.scramblerDb}dB`;
 }
 
-// Nível da copia white relativo à voz principal (dB). A white fica logo abaixo
-// da voz pro humano focar na real, mas como a voz vai NOTCHADA na banda de
-// consoante e a white entra LIMPA, a ASR trava na white (transcreve ela).
-const WHITE_REL_DB = -3;
+// Nível da copia white relativo à voz principal (dB). NEGATIVO e baixo de
+// propósito: a white fica num MURMÚRIO que o humano não percebe conscientemente
+// (a voz real, mais alta, mascara ela), mas como a voz real vai com as PISTAS DE
+// ASR destruídas (notches + band-limit telefônico) e a white entra LIMPA e
+// COMPRIMIDA (nível estável), a transcrição "trava" na white. Este é o botão de
+// calibração humano-imperceptível × IA-transcreve: mais negativo = mais
+// imperceptível porém menos garantido na ASR; menos negativo = vira 2ª voz.
+const WHITE_REL_DB = -10;
 
 /**
  * Mix do `maximo` com COPIA WHITE (técnica maskai): voz real degradada (input
- * 0) + fala white limpa nivelada (input 1) + ruído (2..N). A ASR transcreve a
- * white; o humano segue a voz real no foco.
+ * 0) + fala white LIMPA e baixa (input 1) + ruído leve (2..N). A voz real leva
+ * um `lowpass` que tira o detalhe de consoante que a ASR usa (mas o humano
+ * segue, igual telefone); a white entra como murmúrio coerente → a ASR
+ * transcreve a white. Sem eco audível: o resultado soa natural.
  */
 function buildWhiteMixComplex(cfg: ModeCfg, whiteGainDb: number): { complex: string; needsPink: boolean; needsBrown: boolean; needsHf: boolean } {
   const usePink = cfg.pinkDb > -99;
   const useBrown = cfg.brownDb > -99;
   const useHf = cfg.hfDb > -99;
-  const parts: string[] = [`[1:a]volume=${whiteGainDb.toFixed(2)}dB[wht]`];
-  const labels: string[] = ["[0:a]", "[wht]"];
+  // [0:a] = voz real já degradada; lowpass derruba consoantes (pista de ASR)
+  // mantendo inteligibilidade humana (banda ~telefone). A white fica clean.
+  const parts: string[] = [
+    `[0:a]lowpass=f=3600[vox]`,
+    `[1:a]volume=${whiteGainDb.toFixed(2)}dB[wht]`,
+  ];
+  const labels: string[] = ["[vox]", "[wht]"];
   let idx = 2;
   if (usePink) {
     parts.push(`[${idx}:a]volume=${cfg.pinkDb}dB[nzP]`);
@@ -432,11 +443,13 @@ async function renderAudioWav(
   if (hasWhite && whiteName) {
     const whiteWav = `ch_${id}.wav`;
     try {
-      // processa a white: loopa pra cobrir a duração, limita à banda de voz e nivela dinâmica
+      // processa a white: loopa pra cobrir a duração, banda ~telefone (300-3600,
+      // a faixa que a ASR mais pesa) e compressão forte → nível ESTÁVEL mesmo
+      // baixo, pra IA captar o murmúrio sem o humano perceber uma 2ª voz.
       const loopIn = duration > 1 ? ["-stream_loop", "-1", "-i", whiteName, "-t", duration.toFixed(3)] : ["-i", whiteName];
       const wcode = await ffmpeg.exec([
         ...loopIn,
-        "-af", "aresample=48000,aformat=channel_layouts=mono,highpass=f=180,lowpass=f=6500,acompressor=threshold=-20dB:ratio=4:attack=10:release=180:makeup=4",
+        "-af", "aresample=48000,aformat=channel_layouts=mono,highpass=f=300,lowpass=f=3600,acompressor=threshold=-24dB:ratio=6:attack=8:release=160:makeup=6",
         "-c:a", "pcm_s16le", "-y", whiteWav,
       ]);
       if (wcode !== 0) throw new Error("white falhou");
@@ -445,9 +458,12 @@ async function renderAudioWav(
       const mMean = (await meanVolumeDb(ffmpeg, voiceWav)) ?? -20;
       const wMean = (await meanVolumeDb(ffmpeg, whiteWav)) ?? -20;
       let gain = mMean + WHITE_REL_DB - wMean;
-      gain = Math.max(-24, Math.min(18, gain)); // clamp pra não estourar/sumir
+      gain = Math.max(-28, Math.min(12, gain)); // clamp pra não estourar/sumir
 
-      const mix = buildWhiteMixComplex(cfg, gain);
+      // ruído MÍNIMO no caminho white (só um pink bem baixo): o disfarce vem da
+      // white + lowpass na voz, não do ruído → saída soa natural/limpa.
+      const cleanCfg: ModeCfg = { ...cfg, pinkDb: -60, brownDb: -100, hfDb: -100 };
+      const mix = buildWhiteMixComplex(cleanCfg, gain);
       const inputs = ["-i", voiceWav, "-i", whiteWav];
       if (mix.needsPink) inputs.push(...lavfiInput("pink", duration));
       if (mix.needsBrown) inputs.push(...lavfiInput("brown", duration));

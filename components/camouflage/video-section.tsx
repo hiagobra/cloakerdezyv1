@@ -5,7 +5,7 @@ import { camouflageVideo, type VideoMode } from "@/lib/camouflage/client/video";
 import { protectVideoAudio, type AudioMode } from "@/lib/camouflage/client/audio";
 import { useCamouflageQueue } from "@/lib/camouflage/client/queue";
 import { trackCamouflage, useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
-import { CamoResult, CoverPicker, Dropzone, JobList, ModeSelector, SectionCard, WhiteCopyPicker } from "./shared";
+import { CamoResult, CoverPicker, Dropzone, JobList, ModeSelector, SectionCard, WhiteCopyPicker, getDefaultWhiteCopy } from "./shared";
 
 const MODES: { value: VideoMode; label: string; desc: string }[] = [
   { value: "leve", label: "Leve", desc: "Perturbação mínima, mais rápido." },
@@ -14,8 +14,8 @@ const MODES: { value: VideoMode; label: string; desc: string }[] = [
 ];
 
 const AUDIO_MODES: { value: AudioMode; label: string; desc: string }[] = [
-  { value: "leve", label: "Leve", desc: "Imperceptível." },
-  { value: "maximo", label: "Máximo", desc: "IA não transcreve; leve eco audível." },
+  { value: "leve", label: "Leve", desc: "Imperceptível, anti-fingerprint." },
+  { value: "maximo", label: "Máximo", desc: "Copia white imperceptível + voz real anti-ASR." },
 ];
 
 export function VideoSection() {
@@ -32,10 +32,12 @@ export function VideoSection() {
     queue.onComplete(() => trackCamouflage("video"));
   }, [queue]);
 
-  const onFiles = (files: File[]) => {
+  const onFiles = async (files: File[]) => {
     const videos = files.filter((f) => f.type.startsWith("video/") || /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(f.name));
     if (videos.length === 0) return;
-    const white = protectAudio ? whiteCopy : null;
+    // Encriptação de áudio: se ligada e o usuário não escolheu uma copia white,
+    // usa a padrão (genérica) — a anti-IA sempre sobrepõe uma white.
+    const white = protectAudio ? (whiteCopy ?? (await getDefaultWhiteCopy())) : null;
     queue.enqueue(
       videos.map((file) => ({
         fileName: file.name,
@@ -69,8 +71,8 @@ export function VideoSection() {
       <div className="mt-4 rounded-2xl border border-border-soft bg-card-soft/40 p-4">
         <label className="flex cursor-pointer items-center justify-between gap-3">
           <span>
-            <span className="block text-sm font-medium text-foreground">Proteger áudio contra IA</span>
-            <span className="block text-xs text-muted">Adiciona camadas que confundem a transcrição automática.</span>
+            <span className="block text-sm font-medium text-foreground">Encriptar áudio contra IA</span>
+            <span className="block text-xs text-muted">Sobrepõe uma copia white imperceptível pro humano que a IA transcreve no lugar da fala real.</span>
           </span>
           <button
             type="button"
@@ -88,11 +90,14 @@ export function VideoSection() {
               <ModeSelector value={audioMode} options={AUDIO_MODES} onChange={setAudioMode} />
               <WhiteCopyPicker file={whiteCopy} onPick={setWhiteCopy} onClear={() => setWhiteCopy(null)} />
             </div>
-            {whiteCopy ? (
-              <p className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-strong">
-                Copia white ativa: a IA vai transcrever <strong className="text-foreground">{whiteCopy.name}</strong> no lugar do áudio real. Funciona melhor no modo <strong className="text-foreground">Máximo</strong>.
-              </p>
-            ) : null}
+            <p className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-strong">
+              {whiteCopy ? (
+                <>A IA vai transcrever <strong className="text-foreground">{whiteCopy.name}</strong> no lugar da fala real.</>
+              ) : (
+                <>Sem escolher uma copia, usamos a <strong className="text-foreground">genérica</strong> automaticamente.</>
+              )}{" "}
+              Ela entra num nível baixo (imperceptível pro ouvido) e a voz real fica com as pistas de transcrição destruídas. Use o modo <strong className="text-foreground">Máximo</strong>.
+            </p>
           </div>
         ) : null}
       </div>

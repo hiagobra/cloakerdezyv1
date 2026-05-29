@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import { camouflageAudio, type AudioMode } from "@/lib/camouflage/client/audio";
 import { useCamouflageQueue } from "@/lib/camouflage/client/queue";
 import { trackCamouflage, useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
-import { CamoResult, Dropzone, JobList, ModeSelector, SectionCard, WhiteCopyPicker } from "./shared";
+import { CamoResult, Dropzone, JobList, ModeSelector, SectionCard, WhiteCopyPicker, getDefaultWhiteCopy } from "./shared";
 
 const MODES: { value: AudioMode; label: string; desc: string }[] = [
   { value: "leve", label: "Leve", desc: "Imperceptível: jitter + pitch sutil + poison HF." },
-  { value: "maximo", label: "Máximo (anti-IA)", desc: "Nível maskai: camada reversa + eco + notches. IA não transcreve; leve eco audível." },
+  { value: "maximo", label: "Máximo (anti-IA)", desc: "Copia white imperceptível + voz real com pistas de ASR destruídas." },
 ];
 
 export function AudioSection() {
@@ -22,12 +22,13 @@ export function AudioSection() {
     queue.onComplete(() => trackCamouflage("audio"));
   }, [queue]);
 
-  const onFiles = (files: File[]) => {
+  const onFiles = async (files: File[]) => {
     const valid = files.filter(
       (f) => f.type.startsWith("audio/") || f.type.startsWith("video/") || /\.(mp3|wav|m4a|aac|ogg|mp4|mov|webm|avi|mkv)$/i.test(f.name),
     );
     if (valid.length === 0) return;
-    const white = whiteCopy;
+    // No máximo, garante uma copia white (genérica, se o usuário não escolheu).
+    const white = whiteCopy ?? (mode === "maximo" ? await getDefaultWhiteCopy() : null);
     queue.enqueue(
       valid.map((file) => ({
         fileName: file.name,
@@ -49,9 +50,14 @@ export function AudioSection() {
         <WhiteCopyPicker file={whiteCopy} onPick={setWhiteCopy} onClear={() => setWhiteCopy(null)} />
       </div>
 
-      {whiteCopy ? (
+      {mode === "maximo" ? (
         <p className="mt-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-strong">
-          Copia white ativa: a IA de transcrição vai ler <strong className="text-foreground">{whiteCopy.name}</strong> no lugar do que é realmente falado. Use o modo <strong className="text-foreground">Máximo</strong> pra degradar a voz real e a copia white dominar a transcrição.
+          {whiteCopy ? (
+            <>A IA de transcrição vai ler <strong className="text-foreground">{whiteCopy.name}</strong> no lugar da fala real.</>
+          ) : (
+            <>Sem escolher uma copia, usamos a <strong className="text-foreground">genérica</strong> automaticamente.</>
+          )}{" "}
+          A copia entra num murmúrio imperceptível pro ouvido e a voz real fica com as pistas de transcrição (consoantes) destruídas.
         </p>
       ) : null}
 

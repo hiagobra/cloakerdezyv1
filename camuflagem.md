@@ -92,22 +92,24 @@ UI da aba Vídeo: toggle **"Proteger áudio contra IA"** (default ligado, modo `
 
 DSP sozinho (reverso/eco/notches) **não engana ASR moderno** (Gemini, AssemblyAi): a transcrição sai praticamente igual. O que o maskai faz de fato é **sobrepor uma fala diferente e LIMPA (“copia white”)** por cima do áudio real:
 
-- a **voz real** é degradada na banda de consoante (notches + compress) → fica difícil pra ASR, mas o humano segue pelo contexto;
-- a **copia white** (renda extra, prosperidade, emagrecimento… ou um arquivo do usuário) entra **limpa** na banda de voz (180–6500 Hz), nivelada ~3 dB abaixo da real;
-- a ASR, achando a voz real “suja” e a white “limpa”, **transcreve a white** → a transcrição sai coerente porém **errada** (não é o que está sendo falado). Sem white, só DSP, a ASR “ouve silêncio/ruído” e a plataforma **marca** o criativo.
+- a **voz real** é degradada na banda de consoante (notches + compress) **e leva um `lowpass=3600`** que tira o detalhe que a ASR usa — mas o humano segue (banda ~telefone, totalmente inteligível);
+- a **copia white** entra **limpa**, band-limitada à faixa que a ASR mais pesa (`highpass=300,lowpass=3600`) e **muito comprimida** (nível estável mesmo baixo), nivelada **~10 dB ABAIXO** da real → vira um **murmúrio imperceptível** pro ouvido humano, mas coerente pra ASR;
+- a ASR, achando a voz real “suja/abafada” e a white “limpa e estável”, **transcreve a white** → a transcrição sai coerente porém **errada**. Sem white, só DSP, a ASR “ouve silêncio/ruído” e a plataforma **marca** o criativo.
+
+**Objetivo de calibração (pedido do usuário):** a white **NÃO** pode ser percebida por humanos (não é uma 2ª voz audível) — só pela IA de transcrição. O botão é `WHITE_REL_DB` (default **−10**): mais negativo = mais imperceptível porém menos garantido na ASR; menos negativo = começa a virar 2ª voz audível. **Sem eco audível** (o reverso/eco só é fallback quando não há white).
 
 **Implementação (`renderAudioWav` com `whiteName`):**
 1. PASS 1 — voz real degradada (notches+compress forçados) → `cv_*.wav`.
-2. PASS W — white **loopada** pra cobrir a duração (`-stream_loop -1 -t <dur>`), band-limitada (`highpass=180,lowpass=6500`) e comprimida (`acompressor`) → `ch_*.wav`.
-3. nivelamento por medição: `gain = mean(voz) + WHITE_REL_DB(-3) − mean(white)`, clampado [-24, +18] dB.
-4. PASS MIX — `buildWhiteMixComplex`: `[voz][white·gain][ruído…]amix → alimiter`.
+2. PASS W — white **loopada** (`-stream_loop -1 -t <dur>`), `highpass=300,lowpass=3600`, `acompressor=threshold=-24:ratio=6:makeup=6` → `ch_*.wav`.
+3. nivelamento por medição: `gain = mean(voz) + WHITE_REL_DB(−10) − mean(white)`, clampado [−28, +12] dB.
+4. PASS MIX — `buildWhiteMixComplex`: `[0:a]lowpass=3600[vox];[1:a]vol[wht];[vox][wht][pink −60]amix → alimiter`. Ruído **mínimo** (`cleanCfg`: só pink −60) pra saída soar natural.
 5. fallbacks: white falhou → scrambler reverso; tudo falhou → voz limpa; nunca fica mudo.
 
-**UI:** `WhiteCopyPicker` (em `shared.tsx`) nas abas **Áudio** e **Vídeo** (dentro de “Proteger áudio contra IA”). Aceita áudio **ou vídeo** como fonte da copia. Aplicada a todos os arquivos da fila. Recomendado com modo **Máximo**.
+**UI:** `WhiteCopyPicker` (em `shared.tsx`) nas abas **Áudio** e **Vídeo**. Chips de preset + upload próprio. **A white é AUTOMÁTICA:** se o usuário não escolher uma, `getDefaultWhiteCopy()` carrega a **genérica** (no áudio quando modo=máximo; no vídeo quando “Encriptar áudio” está ligado). O vídeo aplica a encriptação de áudio por padrão.
 
-**Copias prontas (embutidas):** quatro MP3 em `public/camouflage/whitecopy/` (`renda-extra`, `emagrecimento`, `prosperidade`, `generico`) — falas neutras/“white” de ~40s geradas com vozes neurais pt-BR (edge-tts: Francisca/Antonio). O `WhiteCopyPicker` mostra chips de preset que dão `fetch` no MP3 e o convertem em `File`. O usuário ainda pode subir o próprio áudio/vídeo. Pra regenerar: `python -m edge_tts --file <txt> --voice pt-BR-FranciscaNeural --write-media <out.mp3>`.
+**Copias prontas (embutidas):** quatro MP3 em `public/camouflage/whitecopy/` (`renda-extra`, `emagrecimento`, `prosperidade`, `generico`) — falas neutras de ~40s geradas com vozes neurais pt-BR (edge-tts: Francisca/Antonio). Pra regenerar: `python -m edge_tts --file <txt> --voice pt-BR-FranciscaNeural --write-media <out.mp3>`.
 
-> Sem copia white o sistema cai no scrambler reverso (DSP), que embaralha mas **não garante** enganar ASR robusto — é esperado a transcrição às vezes sair parecida. A copia white é o que reproduz o resultado do maskai.
+> **Limite honesto:** “100% inaudível pro humano × 100% transcrito pela IA” é um trade-off de calibração (arms race com Whisper/Gemini). O default (−10 dB + lowpass na voz) busca o ponto do maskai, mas pode precisar de ajuste fino no `WHITE_REL_DB` conforme o teste real de transcrição.
 
 ## Camuflagem de IMAGEM e METADADOS
 

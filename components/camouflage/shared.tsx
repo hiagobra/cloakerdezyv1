@@ -242,6 +242,20 @@ async function fetchPresetFile(preset: { id: string; file: string }): Promise<Fi
   return new File([blob], `${preset.id}.mp3`, { type: "audio/mpeg" });
 }
 
+/**
+ * Copia white padrão (preset "genérico") pra quando o usuário não escolher uma —
+ * garante que a encriptação anti-IA sempre tenha uma white pra sobrepor.
+ * Retorna null se o fetch falhar (aí o pipeline cai no fallback DSP).
+ */
+export async function getDefaultWhiteCopy(): Promise<File | null> {
+  const generic = WHITE_COPY_PRESETS.find((p) => p.id === "generico") ?? WHITE_COPY_PRESETS[0];
+  try {
+    return await fetchPresetFile(generic);
+  } catch {
+    return null;
+  }
+}
+
 export function WhiteCopyPicker({ file, onPick, onClear }: { file: File | null; onPick: (f: File) => void; onClear: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
