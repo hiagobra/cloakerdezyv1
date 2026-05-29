@@ -50,5 +50,9 @@ audio-encryption-poc/web-demo/outputs/
 # runtime job storage
 .runtime-storage/
 
-# reference SaaS (não faz parte do app, usado só como referência local)
+# programas de referência (não fazem parte do app, usados só como referência local)
 camouflageads-master/
+Cloaker-de-Audio-e-Video-main/
+smudge-audio-master/
+thorn-main/
+scripts/smudge-audio-master/

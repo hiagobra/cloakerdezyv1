@@ -7,8 +7,8 @@ import { trackCamouflage, useBeforeUnloadGuard } from "@/lib/camouflage/client/t
 import { CamoResult, Dropzone, JobList, ModeSelector, SectionCard } from "./shared";
 
 const MODES: { value: AudioMode; label: string; desc: string }[] = [
-  { value: "leve", label: "Leve", desc: "Pitch-shift de 1% — imperceptível." },
-  { value: "forte", label: "Forte", desc: "Pitch-shift de 2% — ainda imperceptível." },
+  { value: "leve", label: "Leve", desc: "Jitter + pitch sutil + poison HF. Imperceptível." },
+  { value: "forte", label: "Forte", desc: "Adiciona camada reversa anti-ASR + codec laundering." },
 ];
 
 export function AudioSection() {
@@ -40,7 +40,7 @@ export function AudioSection() {
   return (
     <SectionCard
       title="Camuflagem de áudio"
-      description="Aplica um pitch-shift sutil (1-2%) compensado na trilha de áudio. Muda a assinatura sonora pro algoritmo sem o ouvido humano perceber. Funciona em áudios e vídeos (re-codifica só o áudio)."
+      description="Camuflagem multicamada (timing jitter, pitch sutil, mascaramento pink/brown, poison HF 14-18kHz e, no forte, camada reversa anti-transcrição). Embaralha a assinatura sonora pra máquinas sem o ouvido humano perceber. Funciona em áudios e vídeos (re-codifica só o áudio)."
     >
       <ModeSelector value={mode} options={MODES} onChange={setMode} />
 
