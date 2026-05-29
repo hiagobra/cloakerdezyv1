@@ -1,25 +1,30 @@
-"""Phase-cancel cloak (modo Maximo / anti-AssemblyAI).
+"""Phase-cancel cloak (modo Maximo / anti-AssemblyAI) — replica do Maskai.
 
-Tecnica principal (do repo Cloaker-de-Audio-e-Video): monta um estereo onde
+Engenharia reversa do output real do Maskai (``strategy:"dual"`` + ``audioEncryption``):
+medimos o arquivo deles e a tecnica e a mais limpa possivel — **anti-fase pura**:
 
-    L = decoy + original
-    R = decoy - original
+    L = +voz
+    R = -voz
 
 O downmix mono que TODA ASR usa por padrao (Whisper, AssemblyAI, Gemini),
-``(L+R)/2``, vira **somente o decoy** — as palavras reais se cancelam
-matematicamente. O humano em estereo recupera o original via ``(L-R)/2``.
+``(L+R)/2 = (v + (-v))/2 = 0`` -> a voz **se cancela** -> transcricao vazia/lixo.
+O humano em estereo (fone/celular) recupera a voz intacta via ``(L-R)/2 = v``.
 
-Camadas extras:
-- ruido HF (14-18 kHz) somado *em fase* nos dois canais -> sobrevive ao mono
-  (polui fingerprint) e some no canal lateral (humano nao escuta).
-- notches anti-consoante (1500/2800/4500 Hz, do smudge "Lyric Scrub") aplicados
-  de leve no original, pra degradar qualquer vazamento de transcricao caso a ASR
-  processe os canais separadamente.
+Medicao do arquivo do Maskai que confirma isso:
+- correlacao L/R = -0.99 (anti-fase quase perfeita)
+- MID (L+R)/2 = -51 dBFS (silencio -> ASR nao ouve nada)
+- SIDE (L-R)/2 = -26 dBFS (voz no nivel original -> humano ouve normal)
+- HF balanceado, sem ruido extra, sem scrub: **e so fase**.
+
+Por isso, por padrao NAO adicionamos decoy, ruido HF nem notch de consoante — eles
+deixariam residuo audivel no mono (a ASR transcreveria) e/ou sujariam a voz pro
+humano. Esses extras existem como parametros opcionais para A/B, mas ficam OFF.
 
 Sem torch / sem Whisper: roda em CPU em segundos.
 
-Trade-off honesto: em playback MONO (alguns alto-falantes de celular) o humano
-ouve so o decoy. Em estereo/fone, ouve o original. E o jeito do maskai/Meta-ads.
+Trade-off honesto (mesmo do Maskai): em playback estritamente MONO (somando L+R)
+a voz some. Em estereo/fone (a esmagadora maioria) o humano ouve perfeito; o
+pipeline de moderacao/transcricao baixa pra mono e nao ouve nada.
 """
 
 from __future__ import annotations
@@ -71,14 +76,11 @@ def _bandlimited_noise(n: int, sr: int, lo: float, hi: float, target_dbfs: float
     return _rms_normalize(band, target_dbfs)
 
 
-# Notches anti-consoante (smudge "Lyric Scrub"): (freq_hz, largura_hz).
+# Notches anti-consoante (smudge "Lyric Scrub"): (freq_hz, largura_hz). OPCIONAL.
 _CONSONANT_NOTCHES = ((1500.0, 300.0), (2800.0, 400.0), (4500.0, 500.0))
 
 
 def _consonant_scrub(mono: np.ndarray, sr: int, depth: float = 0.6) -> np.ndarray:
-    """Atenua bandas de consoante (mix dry/wet) pra degradar ASR sem destruir
-    a inteligibilidade pro humano. ``depth`` 0..1 = quanto do sinal notchado
-    substitui o original."""
     if depth <= 0:
         return mono
     nyq = sr / 2.0
@@ -95,31 +97,54 @@ def _consonant_scrub(mono: np.ndarray, sr: int, depth: float = 0.6) -> np.ndarra
 def build_phase_cancel(
     host_stereo: np.ndarray,
     sr: int,
-    decoy_mono: np.ndarray,
-    decoy_sr: int,
-    decoy_dbfs: float = -18.0,
-    orig_dbfs: float = -1.0,
-    pink_dbfs: float = -50.0,
-    scrub_depth: float = 0.6,
+    decoy_mono: np.ndarray | None = None,
+    decoy_sr: int | None = None,
+    *,
+    decoy_dbfs: float | None = None,
+    voice_dbfs: float | None = None,
+    pink_dbfs: float | None = None,
+    scrub_depth: float = 0.0,
     seed: int = 1234,
 ) -> np.ndarray:
-    """Monta o estereo phase-cancel. Retorna array (n, 2) float32."""
-    orig = host_stereo.mean(axis=1).astype(np.float32)
-    if scrub_depth > 0:
-        orig = _consonant_scrub(orig, sr, depth=scrub_depth)
-    orig = _rms_normalize(orig, orig_dbfs)
-    n = orig.shape[0]
+    """Monta o estereo anti-fase puro (estilo Maskai). Retorna array (n, 2) float32.
 
-    if decoy_sr != sr:
-        m = int(decoy_mono.shape[0] * sr / decoy_sr)
-        decoy_mono = sp_signal.resample(decoy_mono, m).astype(np.float32)
-    decoy = _loop_to_length(decoy_mono.astype(np.float32), n)
-    decoy = _rms_normalize(decoy, decoy_dbfs)
+    Por padrao (todos os extras None/0): ``L = v``, ``R = -v`` — a voz some no mono.
 
-    noise = _bandlimited_noise(n, sr, 14000.0, 18000.0, pink_dbfs, seed)
+    Parametros opcionais (OFF por padrao, so pra A/B):
+    - ``decoy_dbfs``: se setado + ``decoy_mono`` dado, soma o decoy EM FASE nos dois
+      canais (sobrevive ao mono -> ASR transcreve o decoy em vez de silencio).
+    - ``pink_dbfs``: se setado, soma ruido HF (14-18 kHz) em fase nos dois canais.
+    - ``scrub_depth``: 0..1, notcha consoantes da voz.
+    - ``voice_dbfs``: se setado, normaliza a voz por RMS; None = mantem o nivel
+      original (o que o Maskai faz — SIDE fica no mesmo nivel da entrada).
+    """
+    v = host_stereo.mean(axis=1).astype(np.float32)
+    if scrub_depth and scrub_depth > 0:
+        v = _consonant_scrub(v, sr, depth=scrub_depth)
+    if voice_dbfs is not None:
+        v = _rms_normalize(v, voice_dbfs)
+    n = v.shape[0]
 
-    left = decoy + orig + noise
-    right = decoy - orig + noise
+    left = v.copy()
+    right = -v.copy()
+
+    # Componente EM FASE (sobrevive ao downmix mono). OFF por padrao pra bater
+    # com o Maskai, que deixa o mono em silencio.
+    common = np.zeros(n, dtype=np.float32)
+    if decoy_dbfs is not None and decoy_mono is not None:
+        d = decoy_mono.astype(np.float32)
+        if decoy_sr is not None and decoy_sr != sr:
+            m = int(d.shape[0] * sr / decoy_sr)
+            d = sp_signal.resample(d, m).astype(np.float32)
+        d = _loop_to_length(d, n)
+        common = common + _rms_normalize(d, decoy_dbfs)
+    if pink_dbfs is not None:
+        common = common + _bandlimited_noise(n, sr, 14000.0, 18000.0, pink_dbfs, seed)
+
+    if np.any(common):
+        left = left + common
+        right = right + common
+
     out = np.stack([left, right], axis=1).astype(np.float32)
     peak = float(np.max(np.abs(out)) + 1e-9)
     if peak > 0.99:
@@ -128,8 +153,12 @@ def build_phase_cancel(
 
 
 def _encode_audio(src_wav: Path, dst: Path) -> None:
-    """Codifica MANTENDO estereo (critico pro phase-cancel) e bitrate alto
-    (reduz vazamento do original no mono por causa do codec lossy)."""
+    """Codifica MANTENDO estereo (critico pro phase-cancel) e bitrate alto.
+
+    AAC joint-stereo (M/S) representa exatamente mid/side: com anti-fase o mid e
+    ~silencio (barato) e o side carrega tudo, entao a inversao de fase sobrevive
+    ao codec (confirmado: o proprio Maskai entrega AAC com corr -0.99).
+    """
     ext = dst.suffix.lower()
     if ext in (".m4a", ".aac", ".mp4"):
         codec = ["-c:a", "aac", "-b:a", "256k"]
@@ -173,19 +202,20 @@ def cloak_phase(
     input_path: str | Path,
     output_path: str | Path,
     target_preset: str,
-    decoy_dbfs: float = -18.0,
-    orig_dbfs: float = -1.0,
-    scrub_depth: float = 0.6,
+    *,
+    decoy_dbfs: float | None = None,
+    voice_dbfs: float | None = None,
+    scrub_depth: float = 0.0,
+    pink_dbfs: float | None = None,
     tts_speech_rate: int = 170,
     progress: ProgressFn = None,
 ) -> dict[str, Any]:
     """Phase-cancel cloak para AUDIO ou VIDEO (detecta automaticamente).
 
-    Para video: extrai audio -> phase-cancel -> remuxa no container original +
-    limpa metadados. Para audio: gera o arquivo phase-cancel direto.
+    Default = Maskai puro (anti-fase, sem decoy/ruido/scrub). O ``target_preset``
+    so e usado se ``decoy_dbfs`` for setado (modo A/B com isca audivel no mono).
     """
     ensure_ffmpeg()
-    target = get_target(target_preset)
     in_path = Path(input_path).resolve()
     out_path = Path(output_path).resolve()
     if not in_path.exists():
@@ -207,13 +237,20 @@ def cloak_phase(
         elif host.shape[1] > 2:
             host = host[:, :2]
 
-        _emit(progress, 30, "gerando decoy (TTS do topico-alvo)")
-        decoy, dsr = generate_tts_underlay(target, wd, sample_rate=sr, tts_speech_rate=tts_speech_rate)
+        decoy = None
+        dsr = None
+        if decoy_dbfs is not None:
+            _emit(progress, 30, "gerando decoy (TTS do topico-alvo)")
+            target = get_target(target_preset)
+            decoy, dsr = generate_tts_underlay(
+                target, wd, sample_rate=sr, tts_speech_rate=tts_speech_rate
+            )
 
-        _emit(progress, 60, "montando phase-cancel estereo")
+        _emit(progress, 60, "montando anti-fase estereo")
         out = build_phase_cancel(
             host, sr, decoy, dsr,
-            decoy_dbfs=decoy_dbfs, orig_dbfs=orig_dbfs, scrub_depth=scrub_depth,
+            decoy_dbfs=decoy_dbfs, voice_dbfs=voice_dbfs,
+            pink_dbfs=pink_dbfs, scrub_depth=scrub_depth,
         )
         out_wav = wd / "phase.wav"
         sf.write(str(out_wav), out, sr)
@@ -229,5 +266,5 @@ def cloak_phase(
         "output": str(out_path),
         "kind": "video" if is_video else "audio",
         "target_preset": target_preset,
-        "technique": "phase_cancel_stereo",
+        "technique": "phase_cancel_pure" if decoy_dbfs is None else "phase_cancel_decoy",
     }

@@ -173,8 +173,9 @@ def _cmd_cloak_phase(args: argparse.Namespace) -> None:
         output_path=args.output,
         target_preset=args.target_preset,
         decoy_dbfs=args.decoy_dbfs,
-        orig_dbfs=args.orig_dbfs,
+        voice_dbfs=args.voice_dbfs,
         scrub_depth=args.scrub_depth,
+        pink_dbfs=args.pink_dbfs,
         progress=_prog,
     )
     print(json.dumps(res, ensure_ascii=False))
@@ -604,16 +605,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cloak_phase.add_argument("--output", required=True)
     p_cloak_phase.add_argument("--target-preset", required=True, choices=list_targets())
     p_cloak_phase.add_argument(
-        "--decoy-dbfs", type=float, default=-18.0,
-        help="Nivel do decoy (TTS) no mono. Mais alto = ASR transcreve o decoy com mais forca.",
+        "--decoy-dbfs", type=float, default=None,
+        help="(opcional/A-B) Nivel do decoy TTS EM FASE no mono. Default OFF (Maskai puro: mono em silencio).",
     )
     p_cloak_phase.add_argument(
-        "--orig-dbfs", type=float, default=-1.0,
-        help="Nivel do original no canal lateral (o que o humano ouve em estereo).",
+        "--voice-dbfs", type=float, default=None,
+        help="(opcional) Normaliza a voz por RMS. Default None = mantem nivel original (igual Maskai).",
     )
     p_cloak_phase.add_argument(
-        "--scrub-depth", type=float, default=0.6,
-        help="0..1: quanto notchar consoantes do original (degrada vazamento de ASR).",
+        "--scrub-depth", type=float, default=0.0,
+        help="(opcional/A-B) 0..1: notcha consoantes da voz. Default 0 (voz limpa, igual Maskai).",
+    )
+    p_cloak_phase.add_argument(
+        "--pink-dbfs", type=float, default=None,
+        help="(opcional/A-B) Ruido HF 14-18kHz em fase nos dois canais. Default OFF.",
     )
     p_cloak_phase.set_defaults(func=_cmd_cloak_phase)
 
