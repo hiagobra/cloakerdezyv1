@@ -21,8 +21,29 @@ export function useServerJobs() {
   const [uploading, setUploading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
+  const jobsRef = useRef<ServerJob[]>([]);
+  jobsRef.current = jobs;
 
   const hasActive = jobs.some((j) => j.status === "queued" || j.status === "processing");
+
+  // Ao fechar/recarregar a aba, tira os jobs ativos da fila do servidor
+  // (DELETE com keepalive sobrevive ao unload). Navegacao dentro do SPA nao
+  // dispara pagehide, entao trocar de aba interna nao cancela.
+  useEffect(() => {
+    const cancelActive = () => {
+      for (const job of jobsRef.current) {
+        if (job.status === "queued" || job.status === "processing") {
+          try {
+            void fetch(`/api/camouflage/jobs/${job.id}`, { method: "DELETE", keepalive: true });
+          } catch {
+            /* unload best-effort */
+          }
+        }
+      }
+    };
+    window.addEventListener("pagehide", cancelActive);
+    return () => window.removeEventListener("pagehide", cancelActive);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {

@@ -94,13 +94,26 @@ function resolveOutput(job: JobRecord): { outputPath: string; outputName: string
 
 function buildPythonArgs(job: JobRecord, outputPath: string): string[] {
   const preset = job.target_preset || "financas_pt";
+
+  // Maximo (audio OU video): phase-cancel. Remove as palavras reais do downmix
+  // mono que toda ASR (AssemblyAI/Whisper/Gemini) usa. CPU, sem torch.
+  if (job.mode === "max") {
+    return [
+      "-m", "audio_poc.cli", "cloak-phase",
+      "--input", job.input_path,
+      "--output", outputPath,
+      "--target-preset", preset,
+    ];
+  }
+
+  // Rapido: pipeline "viés de tópico" (mono-compativel, funciona em qualquer device).
   if (job.kind === "video") {
     return [
       "-m", "audio_poc.cli", "cloak",
       "--input", job.input_path,
       "--output", outputPath,
       "--target-preset", preset,
-      "--profile", job.mode === "max" ? "aggressive" : "standard",
+      "--profile", "standard",
     ];
   }
   return [
@@ -108,7 +121,7 @@ function buildPythonArgs(job: JobRecord, outputPath: string): string[] {
     "--input", job.input_path,
     "--output", outputPath,
     "--target-preset", preset,
-    "--mode", job.mode,
+    "--mode", "fast",
   ];
 }
 

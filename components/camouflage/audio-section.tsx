@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useServerJobs } from "@/lib/camouflage/client/server-jobs";
-import { useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
 import {
   WHITE_SCRIPT_PRESETS,
   DEFAULT_TARGET_PRESET,
@@ -13,8 +12,8 @@ import {
 import { Dropzone, ModeSelector, SectionCard, ServerJobList, TargetPresetPicker } from "./shared";
 
 const MODES: { value: JobMode; label: string; desc: string }[] = [
-  { value: "fast", label: "Rápido", desc: "CPU rápido. Desloca o tópico que a IA percebe." },
-  { value: "max", label: "Máximo (anti-IA)", desc: "Adversarial no Whisper: transcrição vira lixo. Mais lento." },
+  { value: "fast", label: "Rápido", desc: "Funciona em qualquer device; desloca o tópico (não garante)." },
+  { value: "max", label: "Máximo (anti-IA)", desc: "Cancelamento de fase: a IA só transcreve o decoy. Estéreo/fone p/ ouvir o original." },
 ];
 
 export function AudioSection() {
@@ -22,8 +21,6 @@ export function AudioSection() {
   const [preset, setPreset] = useState<string>(DEFAULT_TARGET_PRESET);
   const { jobs, error, uploading, hasActive, uploadFiles, removeJob, clearFinished } = useServerJobs();
   const audioJobs = jobs.filter((j) => j.kind === "audio");
-
-  useBeforeUnloadGuard(uploading);
 
   const onFiles = (files: File[]) => {
     const valid = files.filter((f) => detectKind(f.name, f.type) === "audio");
@@ -71,7 +68,7 @@ export function AudioSection() {
 
       {hasActive ? (
         <p className="mt-3 text-xs text-muted">
-          Os jobs continuam processando no servidor mesmo se você fechar a aba.
+          Mantenha esta aba aberta: se você fechar, os jobs em andamento saem da fila.
         </p>
       ) : null}
     </SectionCard>

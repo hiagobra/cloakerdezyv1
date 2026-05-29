@@ -75,8 +75,8 @@ export function detectKind(fileName: string, mimeType?: string): JobKind | null 
 
 /** Estimativa de tempo (texto) por modo, pra UI setar expectativa. */
 export const MODE_HINT: Record<JobMode, string> = {
-  fast: "Rapido (CPU) - normalmente menos de 1 min por arquivo.",
-  max: "Maximo (adversarial) - pode levar varios minutos na fila.",
+  fast: "Rapido (CPU): funciona em qualquer device; embaralha o topico (nao garante transcricao-lixo).",
+  max: "Maximo (cancelamento de fase): a IA (AssemblyAI/Whisper/Gemini) so pega o decoy; em estereo/fone o humano ouve o original. Rapido na CPU.",
 };
 
 /** Shape da linha do banco (snake_case) que as rotas selecionam. */

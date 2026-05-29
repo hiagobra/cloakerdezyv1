@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useServerJobs } from "@/lib/camouflage/client/server-jobs";
-import { useBeforeUnloadGuard } from "@/lib/camouflage/client/track";
 import {
   WHITE_SCRIPT_PRESETS,
   DEFAULT_TARGET_PRESET,
@@ -13,8 +12,8 @@ import {
 import { Dropzone, ModeSelector, SectionCard, ServerJobList, TargetPresetPicker } from "./shared";
 
 const MODES: { value: JobMode; label: string; desc: string }[] = [
-  { value: "fast", label: "Rápido", desc: "CPU rápido: áudio anti-IA + prompt-inject + SRT + metadados." },
-  { value: "max", label: "Máximo (anti-IA)", desc: "Adversarial no Whisper sobre o áudio. Mais lento, transcrição vira lixo." },
+  { value: "fast", label: "Rápido", desc: "Áudio com viés de tópico + prompt-inject + SRT + metadados." },
+  { value: "max", label: "Máximo (anti-IA)", desc: "Cancelamento de fase no áudio: a IA só transcreve o decoy. Limpa metadados." },
 ];
 
 export function VideoSection() {
@@ -22,8 +21,6 @@ export function VideoSection() {
   const [preset, setPreset] = useState<string>(DEFAULT_TARGET_PRESET);
   const { jobs, error, uploading, hasActive, uploadFiles, removeJob, clearFinished } = useServerJobs();
   const videoJobs = jobs.filter((j) => j.kind === "video");
-
-  useBeforeUnloadGuard(uploading);
 
   const onFiles = (files: File[]) => {
     const valid = files.filter((f) => detectKind(f.name, f.type) === "video");
@@ -71,7 +68,7 @@ export function VideoSection() {
 
       {hasActive ? (
         <p className="mt-3 text-xs text-muted">
-          Os jobs continuam processando no servidor mesmo se você fechar a aba.
+          Mantenha esta aba aberta: se você fechar, os jobs em andamento saem da fila.
         </p>
       ) : null}
     </SectionCard>

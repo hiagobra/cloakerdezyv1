@@ -257,8 +257,9 @@ O app valida origem dinamicamente (`lib/security/request-guard.ts`: `origin.host
 
 ### Modos (híbrido)
 
-- **Rápido (`fast`, default, CPU sem torch):** vídeo → `cloak --profile standard`; áudio → `cloak-audio --mode fast` (TTS underlay + injection bed + DSP + psicoacústica). ~segundos/arquivo. Desloca o "tópico" que a IA percebe.
-- **Máximo (`max`, opt-in, fila lenta):** vídeo → `cloak --profile aggressive` (Whisper-tiny PGD); áudio → `cloak-audio --mode max` (PGD Whisper). Imperceptível + transcrição vira lixo. Minutos/arquivo na CPU; precisa de torch+whisper.
+- **Rápido (`fast`, default, CPU sem torch):** vídeo → `cloak --profile standard`; áudio → `cloak-audio --mode fast` (TTS underlay + injection bed + DSP + psicoacústica). ~segundos/arquivo. Desloca o "tópico" que a IA percebe; funciona em qualquer device (mono-compatível).
+- **Máximo (`max`, CPU, sem torch):** áudio E vídeo → `cloak-phase` (**cancelamento de fase estéreo**, do repo `Cloaker-de-Audio-e-Video`). Monta `L=decoy+orig`, `R=decoy-orig`, então o **downmix mono que toda ASR usa** (`(L+R)/2`) vira **só o decoy** — as palavras reais somem matematicamente do que AssemblyAI/Whisper/Gemini transcrevem. Humano em estéreo/fone recupera o original via `(L-R)/2`. Soma notches anti-consoante (smudge) e ruído HF in-phase 14-18 kHz. Rápido na CPU. **Trade-off honesto:** em playback MONO o humano ouve só o decoy (igual maskai/Meta-ads).
+- **PGD Whisper (legado, opt-in):** `cloak-audio --mode max` (precisa de `.[whisper]`+torch) ainda existe pra ataque adversarial direcionado, mas **não é mais usado pelo worker** — o phase-cancel entrega resultado mais confiável sem GPU/torch.
 
 O **tópico-alvo** (`--target-preset`) é escolhido na UI (`WHITE_SCRIPT_PRESETS` em `lib/camouflage/jobs-config.ts`, casa 1:1 com `TOPIC_TARGETS` em `audio_poc.cloak.targets`).
 
@@ -286,7 +287,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
-pip install -e ".[whisper]"     # SÓ se for usar o modo Máximo (baixa torch+whisper, ~GB)
+# OBS: o modo Máximo agora usa phase-cancel (CPU, sem torch) — NÃO precisa de whisper.
+# pip install -e ".[whisper]"   # opcional: só pro ataque PGD legado (cloak-audio --mode max)
 deactivate
 
 # 3) subir o worker além do app

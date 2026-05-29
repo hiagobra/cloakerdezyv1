@@ -158,6 +158,28 @@ def _cmd_verify_cloak(args: argparse.Namespace) -> None:
         raise SystemExit(f"backend desconhecido: {args.backend}")
 
 
+def _cmd_cloak_phase(args: argparse.Namespace) -> None:
+    """Phase-cancel cloak (modo Maximo / anti-AssemblyAI), audio ou video.
+
+    Emite ``PROGRESS <pct> <msg>`` no stdout e um JSON final.
+    """
+    from .cloak.phase_cloak import cloak_phase
+
+    def _prog(pct: int, msg: str) -> None:
+        print(f"PROGRESS {pct} {msg}", flush=True)
+
+    res = cloak_phase(
+        input_path=args.input,
+        output_path=args.output,
+        target_preset=args.target_preset,
+        decoy_dbfs=args.decoy_dbfs,
+        orig_dbfs=args.orig_dbfs,
+        scrub_depth=args.scrub_depth,
+        progress=_prog,
+    )
+    print(json.dumps(res, ensure_ascii=False))
+
+
 def _cmd_cloak_audio(args: argparse.Namespace) -> None:
     """Audio-only cloak (fast=CPU sem torch, max=PGD Whisper).
 
@@ -569,6 +591,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Recompute even if a cached PNG already exists.",
     )
     p_pre.set_defaults(func=_cmd_precompute_patches)
+
+    p_cloak_phase = sub.add_parser(
+        "cloak-phase",
+        help=(
+            "Phase-cancel cloak (modo Maximo / anti-AssemblyAI), audio OU video. "
+            "Remove as palavras reais do downmix mono que toda ASR usa; humano em "
+            "estereo recupera o original. CPU, sem torch."
+        ),
+    )
+    p_cloak_phase.add_argument("--input", required=True)
+    p_cloak_phase.add_argument("--output", required=True)
+    p_cloak_phase.add_argument("--target-preset", required=True, choices=list_targets())
+    p_cloak_phase.add_argument(
+        "--decoy-dbfs", type=float, default=-18.0,
+        help="Nivel do decoy (TTS) no mono. Mais alto = ASR transcreve o decoy com mais forca.",
+    )
+    p_cloak_phase.add_argument(
+        "--orig-dbfs", type=float, default=-1.0,
+        help="Nivel do original no canal lateral (o que o humano ouve em estereo).",
+    )
+    p_cloak_phase.add_argument(
+        "--scrub-depth", type=float, default=0.6,
+        help="0..1: quanto notchar consoantes do original (degrada vazamento de ASR).",
+    )
+    p_cloak_phase.set_defaults(func=_cmd_cloak_phase)
 
     p_cloak_audio = sub.add_parser(
         "cloak-audio",
