@@ -26,11 +26,12 @@ const CLEANUP_EVERY_IDLE = 60; // a cada ~60 ciclos ociosos (~3min)
 interface JobRecord {
   id: string;
   user_id: string;
-  kind: "audio" | "video";
+  kind: "audio" | "video" | "filter";
   mode: "fast" | "max";
   target_preset: string | null;
   input_path: string;
   input_name: string;
+  cover_path: string | null;
 }
 
 function loadDotEnv(): void {
@@ -79,7 +80,7 @@ function sanitizeBase(name: string): string {
 /** Resolve o caminho/nome de saida conforme o tipo. Video sempre vira .mp4. */
 function resolveOutput(job: JobRecord): { outputPath: string; outputName: string } {
   const dir = getJobDir(job.id);
-  if (job.kind === "video") {
+  if (job.kind === "video" || job.kind === "filter") {
     return {
       outputPath: path.join(dir, "output.mp4"),
       outputName: `camuflado_${sanitizeBase(job.input_name)}.mp4`,
@@ -94,6 +95,18 @@ function resolveOutput(job: JobRecord): { outputPath: string; outputName: string
 
 function buildPythonArgs(job: JobRecord, outputPath: string): string[] {
   const preset = job.target_preset || "financas_pt";
+
+  // Filtros: "desmarca" o criativo (filtro imperceptivel + frame inicial
+  // opcional). Nao mexe no audio (so re-encode quando ha intro).
+  if (job.kind === "filter") {
+    const args = [
+      "-m", "audio_poc.cli", "desmark",
+      "--input", job.input_path,
+      "--output", outputPath,
+    ];
+    if (job.cover_path) args.push("--cover", job.cover_path);
+    return args;
+  }
 
   // Maximo (audio OU video): phase-cancel. Remove as palavras reais do downmix
   // mono que toda ASR (AssemblyAI/Whisper/Gemini) usa. CPU, sem torch.
@@ -153,7 +166,7 @@ function runPython(
     let stderrBuf = "";
     let stdoutCarry = "";
 
-    // Progresso coarse pra video (cloak nao emite PROGRESS); audio usa as linhas.
+    // Progresso coarse pra video (cloak nao emite PROGRESS); audio/filter usam linhas.
     if (job.kind === "video") onProgress(15, "processando video...");
 
     child.stdout.on("data", (chunk: Buffer) => {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit, getClientIp } from "@/lib/security/rate-limit";
 import { isTrustedOrigin } from "@/lib/security/request-guard";
-import { saveInput, removeJobFiles } from "@/lib/camouflage/server/storage";
+import { saveInput, saveCover, removeJobFiles } from "@/lib/camouflage/server/storage";
 import {
   MAX_UPLOAD_BYTES,
   DEFAULT_TARGET_PRESET,
@@ -57,10 +57,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const kind = detectKind(file.name, file.type);
-  if (!kind) {
+  const detected = detectKind(file.name, file.type);
+  // Aba Filtros envia kind=filter; o arquivo principal precisa ser video.
+  const isFilter = form.get("kind") === "filter";
+  if (isFilter && detected !== "video") {
+    return Response.json({ error: "Filtros aceitam apenas video." }, { status: 415 });
+  }
+  if (!isFilter && !detected) {
     return Response.json({ error: "Formato nao suportado (use audio ou video)." }, { status: 415 });
   }
+  const kind = isFilter ? "filter" : detected!;
 
   const modeRaw = form.get("mode");
   const mode = isValidMode(modeRaw) ? modeRaw : "fast";
@@ -68,12 +74,31 @@ export async function POST(request: Request) {
   const presetRaw = form.get("targetPreset");
   const targetPreset = isValidTargetPreset(presetRaw) ? presetRaw : DEFAULT_TARGET_PRESET;
 
+  // Imagem de capa opcional (primeiro frame), so faz sentido pro modo Filtros.
+  const cover = form.get("cover");
+  let coverFile: File | null = null;
+  if (cover instanceof File && cover.size > 0) {
+    if (!cover.type.startsWith("image/")) {
+      return Response.json({ error: "A capa precisa ser uma imagem." }, { status: 415 });
+    }
+    if (cover.size > MAX_UPLOAD_BYTES) {
+      return Response.json({ error: "Imagem de capa muito grande." }, { status: 413 });
+    }
+    coverFile = cover;
+  }
+
   const jobId = randomUUID();
   let inputPath: string;
+  let coverPath: string | null = null;
   try {
     const data = new Uint8Array(await file.arrayBuffer());
     inputPath = await saveInput(jobId, file.name, data);
+    if (coverFile) {
+      const coverData = new Uint8Array(await coverFile.arrayBuffer());
+      coverPath = await saveCover(jobId, coverFile.name, coverData);
+    }
   } catch {
+    await removeJobFiles(jobId);
     return Response.json({ error: "Falha ao salvar o arquivo." }, { status: 500 });
   }
 
@@ -89,6 +114,8 @@ export async function POST(request: Request) {
       progress: 0,
       input_path: inputPath,
       input_name: file.name,
+      cover_path: coverPath,
+      cover_name: coverFile?.name ?? null,
     })
     .select(JOB_SELECT_COLUMNS)
     .single();

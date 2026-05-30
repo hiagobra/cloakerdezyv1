@@ -3,7 +3,7 @@
  * Next: usada tanto pela API/worker quanto pelo frontend.
  */
 
-export type JobKind = "audio" | "video";
+export type JobKind = "audio" | "video" | "filter";
 export type JobMode = "fast" | "max";
 export type JobStatus = "queued" | "processing" | "done" | "error";
 
@@ -17,6 +17,7 @@ export interface ServerJob {
   message: string | null;
   inputName: string;
   outputName: string | null;
+  coverName: string | null;
   error: string | null;
   createdAt: string;
   finishedAt: string | null;
@@ -51,7 +52,7 @@ export function isValidTargetPreset(value: unknown): value is string {
 }
 
 export function isValidKind(value: unknown): value is JobKind {
-  return value === "audio" || value === "video";
+  return value === "audio" || value === "video" || value === "filter";
 }
 
 export function isValidMode(value: unknown): value is JobMode {
@@ -90,6 +91,7 @@ export interface JobRow {
   message: string | null;
   input_name: string;
   output_name: string | null;
+  cover_name: string | null;
   error: string | null;
   created_at: string;
   finished_at: string | null;
@@ -107,6 +109,7 @@ export function mapJobRow(row: JobRow): ServerJob {
     message: row.message,
     inputName: row.input_name,
     outputName: row.output_name,
+    coverName: row.cover_name,
     error: row.error,
     createdAt: row.created_at,
     finishedAt: row.finished_at,
@@ -114,4 +117,4 @@ export function mapJobRow(row: JobRow): ServerJob {
 }
 
 export const JOB_SELECT_COLUMNS =
-  "id, kind, mode, target_preset, status, progress, message, input_name, output_name, error, created_at, finished_at";
+  "id, kind, mode, target_preset, status, progress, message, input_name, output_name, cover_name, error, created_at, finished_at";

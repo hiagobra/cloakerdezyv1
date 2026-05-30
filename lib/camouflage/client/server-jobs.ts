@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { JobMode, ServerJob } from "@/lib/camouflage/jobs-config";
+import type { JobKind, JobMode, ServerJob } from "@/lib/camouflage/jobs-config";
 
 const POLL_MS = 2500;
 
 interface UploadOptions {
   mode: JobMode;
   targetPreset: string;
+  kind?: JobKind;
+  cover?: File | null;
 }
 
 /**
@@ -90,6 +92,8 @@ export function useServerJobs() {
         form.append("file", file);
         form.append("mode", opts.mode);
         form.append("targetPreset", opts.targetPreset);
+        if (opts.kind) form.append("kind", opts.kind);
+        if (opts.cover) form.append("cover", opts.cover);
         try {
           const res = await fetch("/api/camouflage/jobs", { method: "POST", body: form });
           const data = (await res.json().catch(() => ({}))) as { job?: ServerJob; error?: string };

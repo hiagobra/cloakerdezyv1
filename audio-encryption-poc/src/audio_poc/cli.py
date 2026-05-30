@@ -181,6 +181,26 @@ def _cmd_cloak_phase(args: argparse.Namespace) -> None:
     print(json.dumps(res, ensure_ascii=False))
 
 
+def _cmd_desmark(args: argparse.Namespace) -> None:
+    """Desmark de criativo (aba Filtros): filtro imperceptivel + frame inicial.
+
+    Emite ``PROGRESS <pct> <msg>`` no stdout e um JSON final.
+    """
+    from .cloak.desmark import desmark_video
+
+    def _prog(pct: int, msg: str) -> None:
+        print(f"PROGRESS {pct} {msg}", flush=True)
+
+    res = desmark_video(
+        input_path=args.input,
+        output_path=args.output,
+        cover=args.cover,
+        intro_seconds=args.intro_seconds,
+        progress=_prog,
+    )
+    print(json.dumps(res, ensure_ascii=False))
+
+
 def _cmd_cloak_audio(args: argparse.Namespace) -> None:
     """Audio-only cloak (fast=CPU sem torch, max=PGD Whisper).
 
@@ -621,6 +641,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="(opcional/A-B) Ruido HF 14-18kHz em fase nos dois canais. Default OFF.",
     )
     p_cloak_phase.set_defaults(func=_cmd_cloak_phase)
+
+    p_desmark = sub.add_parser(
+        "desmark",
+        help=(
+            "Desmarca um video (aba Filtros): filtro imperceptivel (shift de "
+            "pixels + cor + ruido leve + re-encode) pra quebrar perceptual-hash; "
+            "opcionalmente prependa uma imagem como novo primeiro frame."
+        ),
+    )
+    p_desmark.add_argument("--input", required=True)
+    p_desmark.add_argument("--output", required=True)
+    p_desmark.add_argument("--cover", default=None, help="Imagem opcional pro primeiro frame.")
+    p_desmark.add_argument("--intro-seconds", type=float, default=0.4)
+    p_desmark.set_defaults(func=_cmd_desmark)
 
     p_cloak_audio = sub.add_parser(
         "cloak-audio",

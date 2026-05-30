@@ -39,6 +39,15 @@ export async function saveInput(jobId: string, fileName: string, data: Uint8Arra
   return inputPath;
 }
 
+/** Grava a imagem de capa (opcional) do job e retorna o caminho absoluto. */
+export async function saveCover(jobId: string, fileName: string, data: Uint8Array): Promise<string> {
+  const dir = getJobDir(jobId);
+  await mkdir(dir, { recursive: true });
+  const coverPath = path.join(dir, `cover${safeExtension(fileName, ".png")}`);
+  await writeFile(coverPath, data);
+  return coverPath;
+}
+
 /** Caminho de saida sugerido para o job (a extensao acompanha a entrada). */
 export function outputPathFor(jobId: string, inputName: string): string {
   return path.join(getJobDir(jobId), `output${safeExtension(inputName)}`);

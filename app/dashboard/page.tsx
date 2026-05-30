@@ -7,10 +7,11 @@ import { AppHeader } from "@/components/app/app-header";
 import { Button } from "@/components/ui/button";
 import { preloadFFmpeg } from "@/lib/camouflage/client/ffmpeg";
 import { VideoSection } from "@/components/camouflage/video-section";
+import { FilterSection } from "@/components/camouflage/filter-section";
 import { ImageSection } from "@/components/camouflage/image-section";
 import { MetadataSection } from "@/components/camouflage/metadata-section";
 
-type Tab = "video" | "image" | "metadata";
+type Tab = "video" | "filter" | "image" | "metadata";
 
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   {
@@ -20,6 +21,15 @@ const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <rect x="2" y="5" width="14" height="14" rx="2" />
         <path d="m22 8-6 4 6 4V8z" />
+      </svg>
+    ),
+  },
+  {
+    id: "filter",
+    label: "Filtros",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
       </svg>
     ),
   },
@@ -127,6 +137,7 @@ export default function DashboardPage() {
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           >
             {tab === "video" ? <VideoSection /> : null}
+            {tab === "filter" ? <FilterSection /> : null}
             {tab === "image" ? <ImageSection /> : null}
             {tab === "metadata" ? <MetadataSection /> : null}
           </motion.div>

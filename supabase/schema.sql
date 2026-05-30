@@ -174,9 +174,11 @@ using ((select auth.uid()) = user_id);
 create table if not exists public.camouflage_jobs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
-  kind text not null check (kind in ('audio', 'video')),
+  kind text not null check (kind in ('audio', 'video', 'filter')),
   mode text not null default 'fast' check (mode in ('fast', 'max')),
   target_preset text,
+  cover_path text,
+  cover_name text,
   status text not null default 'queued'
     check (status in ('queued', 'processing', 'done', 'error')),
   progress int not null default 0,
@@ -191,6 +193,24 @@ create table if not exists public.camouflage_jobs (
   started_at timestamptz,
   finished_at timestamptz
 );
+
+-- Migracoes idempotentes para bancos ja existentes (create table if not exists
+-- nao re-aplica colunas/checks novos).
+alter table public.camouflage_jobs add column if not exists cover_path text;
+alter table public.camouflage_jobs add column if not exists cover_name text;
+
+-- Recria o check do kind para incluir 'filter' (aba Filtros / desmark).
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint where conname = 'camouflage_jobs_kind_check'
+  ) then
+    alter table public.camouflage_jobs drop constraint camouflage_jobs_kind_check;
+  end if;
+  alter table public.camouflage_jobs
+    add constraint camouflage_jobs_kind_check
+    check (kind in ('audio', 'video', 'filter'));
+end $$;
 
 create index if not exists camouflage_jobs_user_idx on public.camouflage_jobs (user_id);
 create index if not exists camouflage_jobs_status_idx on public.camouflage_jobs (status);
