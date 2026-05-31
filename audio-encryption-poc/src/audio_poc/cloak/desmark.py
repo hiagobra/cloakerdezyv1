@@ -32,17 +32,48 @@ def _emit(progress: ProgressFn, pct: int, msg: str) -> None:
 
 
 # Filtro imperceptivel aplicado ao video original. {W}/{H} = dimensoes originais.
+# Sem 'noise' de proposito: o gerador de ruido por pixel/frame e o filtro mais
+# caro de todos (dominava o tempo de encode em 4K). O shift geometrico (zoom+
+# recrop), o ajuste de cor (eq/hue) e o proprio re-encode ja mudam a matriz de
+# pixels o suficiente pra quebrar perceptual-hash, sem custo de CPU relevante.
 def _main_video_filter(w: int, h: int) -> str:
     return (
         f"scale=iw*1.02:ih*1.02,crop={w}:{h},"
         "eq=brightness=0.012:contrast=1.025:saturation=1.03:gamma=1.012,"
-        "hue=h=2,noise=alls=5:allf=t,setsar=1"
+        "hue=h=2,setsar=1"
     )
 
 
-_X264 = ["-c:v", "libx264", "-crf", "20", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
-_AAC = ["-c:a", "aac", "-b:a", "192k"]
+_AAC = ["-c:a", "aac", "-b:a", "128k"]
 _AFMT = "aformat=sample_fmts=fltp:channel_layouts=stereo:sample_rates=48000"
+
+
+def _source_kbps(in_path: Path, duration: float) -> int | None:
+    """Taxa de bits media aproximada da entrada (kbps), via tamanho/duracao.
+
+    Usada pra capar a saida perto do original e evitar que o re-encode infle o
+    arquivo (o objetivo e uma alteracao leve, nao subir a qualidade/bitrate)."""
+    try:
+        size_bytes = in_path.stat().st_size
+    except OSError:
+        return None
+    if duration <= 0 or size_bytes <= 0:
+        return None
+    return int(size_bytes * 8 / duration / 1000)
+
+
+def _x264_args(target_kbps: int | None) -> list[str]:
+    """libx264 'constrained quality': CRF pela qualidade + maxrate capando o
+    tamanho perto do original. preset veryfast = bom equilibrio velocidade/peso."""
+    args = [
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-threads", "0",
+    ]
+    if target_kbps and target_kbps > 0:
+        # headroom de 15% sobre a media da entrada (que inclui audio); bufsize 2x.
+        maxrate = max(300, int(target_kbps * 1.15))
+        args += ["-maxrate", f"{maxrate}k", "-bufsize", f"{maxrate * 2}k"]
+    return args
 
 
 def desmark_video(
@@ -69,13 +100,14 @@ def desmark_video(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     main_vf = _main_video_filter(w, h)
+    x264 = _x264_args(_source_kbps(in_path, info.duration))
     cover_path = Path(cover).resolve() if cover else None
     if cover_path is not None and not cover_path.exists():
         cover_path = None
 
     if cover_path is None:
         _emit(progress, 35, "aplicando filtro imperceptivel")
-        args = ["ffmpeg", "-y", "-i", str(in_path), "-vf", main_vf, *_X264]
+        args = ["ffmpeg", "-y", "-i", str(in_path), "-vf", main_vf, *x264]
         if has_audio:
             args += _AAC
         else:
@@ -117,7 +149,7 @@ def desmark_video(
         "-i", str(in_path),
         "-filter_complex", filter_complex,
         *maps,
-        *_X264,
+        *x264,
         *audio_codec,
         "-map_metadata", "-1", "-movflags", "+faststart",
         str(out_path),
