@@ -19,6 +19,9 @@ alter table public.profiles add column if not exists phone text;
 alter table public.profiles add column if not exists status text not null default 'pending';
 alter table public.profiles add column if not exists approved_at timestamptz;
 alter table public.profiles add column if not exists approved_by uuid references auth.users (id) on delete set null;
+alter table public.profiles add column if not exists last_seen_at timestamptz not null default timezone('utc', now());
+alter table public.profiles add column if not exists created_at timestamptz not null default timezone('utc', now());
+alter table public.profiles add column if not exists updated_at timestamptz not null default timezone('utc', now());
 
 do $$
 begin
@@ -67,18 +70,27 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, email, phone, status, last_seen_at)
-  values (
-    new.id,
-    new.email,
-    coalesce(new.raw_user_meta_data ->> 'phone', new.phone),
-    'pending',
-    timezone('utc', now())
-  )
-  on conflict (id) do update
-    set email = excluded.email,
-        phone = coalesce(public.profiles.phone, excluded.phone),
-        last_seen_at = timezone('utc', now());
+  -- Defensivo: NUNCA abortar a criacao do usuario por causa do profile.
+  -- Se a insercao falhar (ex.: email unico de um cadastro antigo, RLS, etc.),
+  -- apenas registra um warning. A rota /api/auth/register faz o upsert do
+  -- profile (service role) logo apos o createUser, entao o profile e garantido.
+  begin
+    insert into public.profiles (id, email, phone, status, last_seen_at)
+    values (
+      new.id,
+      new.email,
+      coalesce(new.raw_user_meta_data ->> 'phone', new.phone),
+      'pending',
+      timezone('utc', now())
+    )
+    on conflict (id) do update
+      set email = excluded.email,
+          phone = coalesce(public.profiles.phone, excluded.phone),
+          last_seen_at = timezone('utc', now());
+  exception
+    when others then
+      raise warning 'handle_new_user: profile nao criado para % (%)', new.id, sqlerrm;
+  end;
   return new;
 end;
 $$;
