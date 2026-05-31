@@ -41,7 +41,11 @@ create index if not exists profiles_status_idx on public.profiles (status);
 create index if not exists profiles_phone_idx on public.profiles (phone);
 
 -- Remove unique constraint herdada do schema antigo: telefone nao deve ser unico.
+-- (Causava "Database error creating new user" quando dois cadastros usavam o
+-- mesmo telefone — o trigger handle_new_user falhava e abortava a criacao.)
 alter table public.profiles drop constraint if exists profiles_phone_key;
+drop index if exists public.profiles_phone_unique_idx;
+alter table public.profiles drop constraint if exists profiles_phone_unique_idx;
 
 drop policy if exists "admins_view_all_profiles" on public.profiles;
 drop table if exists public.admin_allowlist cascade;
