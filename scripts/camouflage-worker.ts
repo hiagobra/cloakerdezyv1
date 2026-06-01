@@ -108,9 +108,14 @@ function customProfileArgs(profile: string | undefined): string[] {
     case "leve":
       return ["--scrub-depth", "0.3"];
     case "pesada":
-      return ["--scrub-depth", "0.7", "--pink-dbfs", "-24", "--decoy-dbfs", "-26"];
+      // Isca como cama de fundo discreta (decoy bem abaixo da voz real). No
+      // downmix mono a voz real cancela e sobra a isca; em estereo o humano
+      // ouve a copy real predominando.
+      return ["--scrub-depth", "0.7", "--pink-dbfs", "-24", "--decoy-dbfs", "-34"];
     case "troca":
-      return ["--scrub-depth", "0.4", "--decoy-dbfs", "-15", "--voice-dbfs", "-34"];
+      // Isca audivel pro ASR-media, mas abaixo da copy real; sem rebaixar a voz
+      // real (sem --voice-dbfs) pra ela predominar pro humano.
+      return ["--scrub-depth", "0.4", "--decoy-dbfs", "-32"];
     case "media":
     default:
       return ["--scrub-depth", "0.6", "--pink-dbfs", "-30"];
