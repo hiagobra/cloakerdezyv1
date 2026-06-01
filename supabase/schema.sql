@@ -190,7 +190,7 @@ using ((select auth.uid()) = user_id);
 create table if not exists public.camouflage_jobs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
-  kind text not null check (kind in ('audio', 'video', 'filter')),
+  kind text not null check (kind in ('audio', 'video', 'filter', 'resize')),
   mode text not null default 'fast' check (mode in ('fast', 'max')),
   target_preset text,
   cover_path text,
@@ -215,7 +215,8 @@ create table if not exists public.camouflage_jobs (
 alter table public.camouflage_jobs add column if not exists cover_path text;
 alter table public.camouflage_jobs add column if not exists cover_name text;
 
--- Recria o check do kind para incluir 'filter' (aba Filtros / desmark).
+-- Recria o check do kind para incluir 'filter' (aba Filtros / desmark) e
+-- 'resize' (aba Redimensionar).
 do $$
 begin
   if exists (
@@ -225,7 +226,7 @@ begin
   end if;
   alter table public.camouflage_jobs
     add constraint camouflage_jobs_kind_check
-    check (kind in ('audio', 'video', 'filter'));
+    check (kind in ('audio', 'video', 'filter', 'resize'));
 end $$;
 
 create index if not exists camouflage_jobs_user_idx on public.camouflage_jobs (user_id);

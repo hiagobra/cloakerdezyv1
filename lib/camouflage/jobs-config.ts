@@ -3,7 +3,7 @@
  * Next: usada tanto pela API/worker quanto pelo frontend.
  */
 
-export type JobKind = "audio" | "video" | "filter";
+export type JobKind = "audio" | "video" | "filter" | "resize";
 export type JobMode = "fast" | "max";
 export type JobStatus = "queued" | "processing" | "done" | "error";
 
@@ -51,8 +51,23 @@ export function isValidTargetPreset(value: unknown): value is string {
   return typeof value === "string" && WHITE_SCRIPT_PRESETS.some((p) => p.id === value);
 }
 
+/**
+ * Formatos da aba Redimensionar. O `id` viaja na coluna `target_preset` e casa
+ * com o argumento `--format` do subcomando Python `resize`. Saidas em 720p.
+ */
+export const RESIZE_FORMATS: { id: string; label: string; w: number; h: number }[] = [
+  { id: "tiktok", label: "TikTok 9:16", w: 720, h: 1280 },
+  { id: "square", label: "Quadrado 1:1", w: 720, h: 720 },
+];
+
+export const DEFAULT_RESIZE_FORMAT = "tiktok";
+
+export function isValidResizeFormat(value: unknown): value is string {
+  return typeof value === "string" && RESIZE_FORMATS.some((f) => f.id === value);
+}
+
 export function isValidKind(value: unknown): value is JobKind {
-  return value === "audio" || value === "video" || value === "filter";
+  return value === "audio" || value === "video" || value === "filter" || value === "resize";
 }
 
 export function isValidMode(value: unknown): value is JobMode {

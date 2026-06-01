@@ -8,10 +8,11 @@ import { Button } from "@/components/ui/button";
 import { preloadFFmpeg } from "@/lib/camouflage/client/ffmpeg";
 import { VideoSection } from "@/components/camouflage/video-section";
 import { FilterSection } from "@/components/camouflage/filter-section";
+import { ResizeSection } from "@/components/camouflage/resize-section";
 import { ImageSection } from "@/components/camouflage/image-section";
 import { MetadataSection } from "@/components/camouflage/metadata-section";
 
-type Tab = "video" | "filter" | "image" | "metadata";
+type Tab = "video" | "filter" | "resize" | "image" | "metadata";
 
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
   {
@@ -30,6 +31,16 @@ const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+      </svg>
+    ),
+  },
+  {
+    id: "resize",
+    label: "Redimensionar",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        <path d="M15 3v18M3 9h12" />
       </svg>
     ),
   },
@@ -138,6 +149,7 @@ export default function DashboardPage() {
           >
             {tab === "video" ? <VideoSection /> : null}
             {tab === "filter" ? <FilterSection /> : null}
+            {tab === "resize" ? <ResizeSection /> : null}
             {tab === "image" ? <ImageSection /> : null}
             {tab === "metadata" ? <MetadataSection /> : null}
           </motion.div>

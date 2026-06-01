@@ -201,6 +201,25 @@ def _cmd_desmark(args: argparse.Namespace) -> None:
     print(json.dumps(res, ensure_ascii=False))
 
 
+def _cmd_resize(args: argparse.Namespace) -> None:
+    """Redimensiona um video (aba Redimensionar) pro formato escolhido em 720p.
+
+    Emite ``PROGRESS <pct> <msg>`` no stdout e um JSON final.
+    """
+    from .cloak.resize import resize_video
+
+    def _prog(pct: int, msg: str) -> None:
+        print(f"PROGRESS {pct} {msg}", flush=True)
+
+    res = resize_video(
+        input_path=args.input,
+        output_path=args.output,
+        fmt=args.format,
+        progress=_prog,
+    )
+    print(json.dumps(res, ensure_ascii=False))
+
+
 def _cmd_cloak_audio(args: argparse.Namespace) -> None:
     """Audio-only cloak (fast=CPU sem torch, max=PGD Whisper).
 
@@ -655,6 +674,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p_desmark.add_argument("--cover", default=None, help="Imagem opcional pro primeiro frame.")
     p_desmark.add_argument("--intro-seconds", type=float, default=0.4)
     p_desmark.set_defaults(func=_cmd_desmark)
+
+    p_resize = sub.add_parser(
+        "resize",
+        help=(
+            "Redimensiona um video (aba Redimensionar) pro formato recomendado "
+            "de campanha em 720p (square=1:1, tiktok=9:16). Encaixe por crop "
+            "(preenche o quadro, sem barras pretas)."
+        ),
+    )
+    p_resize.add_argument("--input", required=True)
+    p_resize.add_argument("--output", required=True)
+    p_resize.add_argument("--format", choices=["square", "tiktok"], default="tiktok")
+    p_resize.set_defaults(func=_cmd_resize)
 
     p_cloak_audio = sub.add_parser(
         "cloak-audio",

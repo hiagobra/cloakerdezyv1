@@ -26,7 +26,7 @@ const CLEANUP_EVERY_IDLE = 60; // a cada ~60 ciclos ociosos (~3min)
 interface JobRecord {
   id: string;
   user_id: string;
-  kind: "audio" | "video" | "filter";
+  kind: "audio" | "video" | "filter" | "resize";
   mode: "fast" | "max";
   target_preset: string | null;
   input_path: string;
@@ -80,6 +80,12 @@ function sanitizeBase(name: string): string {
 /** Resolve o caminho/nome de saida conforme o tipo. Video sempre vira .mp4. */
 function resolveOutput(job: JobRecord): { outputPath: string; outputName: string } {
   const dir = getJobDir(job.id);
+  if (job.kind === "resize") {
+    return {
+      outputPath: path.join(dir, "output.mp4"),
+      outputName: `redimensionado_${sanitizeBase(job.input_name)}.mp4`,
+    };
+  }
   if (job.kind === "video" || job.kind === "filter") {
     return {
       outputPath: path.join(dir, "output.mp4"),
@@ -95,6 +101,17 @@ function resolveOutput(job: JobRecord): { outputPath: string; outputName: string
 
 function buildPythonArgs(job: JobRecord, outputPath: string): string[] {
   const preset = job.target_preset || "financas_pt";
+
+  // Redimensionar: reescala pro formato escolhido (square/tiktok) em 720p,
+  // preenchendo o quadro (crop). target_preset carrega o formato.
+  if (job.kind === "resize") {
+    return [
+      "-m", "audio_poc.cli", "resize",
+      "--input", job.input_path,
+      "--output", outputPath,
+      "--format", job.target_preset === "square" ? "square" : "tiktok",
+    ];
+  }
 
   // Filtros: "desmarca" o criativo (filtro imperceptivel + frame inicial
   // opcional). Nao mexe no audio (so re-encode quando ha intro).

@@ -6,9 +6,11 @@ import { saveInput, saveCover, removeJobFiles } from "@/lib/camouflage/server/st
 import {
   MAX_UPLOAD_BYTES,
   DEFAULT_TARGET_PRESET,
+  DEFAULT_RESIZE_FORMAT,
   detectKind,
   isValidMode,
   isValidTargetPreset,
+  isValidResizeFormat,
   mapJobRow,
   JOB_SELECT_COLUMNS,
   type JobRow,
@@ -58,21 +60,33 @@ export async function POST(request: Request) {
   }
 
   const detected = detectKind(file.name, file.type);
-  // Aba Filtros envia kind=filter; o arquivo principal precisa ser video.
-  const isFilter = form.get("kind") === "filter";
-  if (isFilter && detected !== "video") {
-    return Response.json({ error: "Filtros aceitam apenas video." }, { status: 415 });
+  // Aba Filtros envia kind=filter; Redimensionar envia kind=resize. Em ambos o
+  // arquivo principal precisa ser video.
+  const kindRaw = form.get("kind");
+  const isFilter = kindRaw === "filter";
+  const isResize = kindRaw === "resize";
+  if ((isFilter || isResize) && detected !== "video") {
+    const label = isResize ? "Redimensionar aceita" : "Filtros aceitam";
+    return Response.json({ error: `${label} apenas video.` }, { status: 415 });
   }
-  if (!isFilter && !detected) {
+  if (!isFilter && !isResize && !detected) {
     return Response.json({ error: "Formato nao suportado (use audio ou video)." }, { status: 415 });
   }
-  const kind = isFilter ? "filter" : detected!;
+  const kind = isFilter ? "filter" : isResize ? "resize" : detected!;
 
   const modeRaw = form.get("mode");
   const mode = isValidMode(modeRaw) ? modeRaw : "fast";
 
+  // Para resize, target_preset carrega o formato (square/tiktok). Para os demais,
+  // carrega o white-script.
   const presetRaw = form.get("targetPreset");
-  const targetPreset = isValidTargetPreset(presetRaw) ? presetRaw : DEFAULT_TARGET_PRESET;
+  const targetPreset = isResize
+    ? isValidResizeFormat(presetRaw)
+      ? presetRaw
+      : DEFAULT_RESIZE_FORMAT
+    : isValidTargetPreset(presetRaw)
+      ? presetRaw
+      : DEFAULT_TARGET_PRESET;
 
   // Imagem de capa opcional (primeiro frame), so faz sentido pro modo Filtros.
   const cover = form.get("cover");
