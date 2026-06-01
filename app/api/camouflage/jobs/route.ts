@@ -7,10 +7,12 @@ import {
   MAX_UPLOAD_BYTES,
   DEFAULT_TARGET_PRESET,
   DEFAULT_RESIZE_FORMAT,
+  DEFAULT_AUDIO_PROFILE,
   detectKind,
   isValidMode,
   isValidTargetPreset,
   isValidResizeFormat,
+  isValidAudioProfile,
   mapJobRow,
   JOB_SELECT_COLUMNS,
   type JobRow,
@@ -77,6 +79,13 @@ export async function POST(request: Request) {
   const modeRaw = form.get("mode");
   const mode = isValidMode(modeRaw) ? modeRaw : "fast";
 
+  // Modo Personalizado: guarda o perfil de alteracao do audio em audio_opts.
+  let audioOpts: { profile: string } | null = null;
+  if (mode === "custom") {
+    const profileRaw = form.get("audioProfile");
+    audioOpts = { profile: isValidAudioProfile(profileRaw) ? profileRaw : DEFAULT_AUDIO_PROFILE };
+  }
+
   // Para resize, target_preset carrega o formato (square/tiktok). Para os demais,
   // carrega o white-script.
   const presetRaw = form.get("targetPreset");
@@ -130,6 +139,7 @@ export async function POST(request: Request) {
       input_name: file.name,
       cover_path: coverPath,
       cover_name: coverFile?.name ?? null,
+      audio_opts: audioOpts,
     })
     .select(JOB_SELECT_COLUMNS)
     .single();

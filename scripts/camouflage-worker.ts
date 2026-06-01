@@ -27,11 +27,12 @@ interface JobRecord {
   id: string;
   user_id: string;
   kind: "audio" | "video" | "filter" | "resize";
-  mode: "fast" | "max";
+  mode: "fast" | "max" | "custom";
   target_preset: string | null;
   input_path: string;
   input_name: string;
   cover_path: string | null;
+  audio_opts: { profile?: string } | null;
 }
 
 function loadDotEnv(): void {
@@ -99,8 +100,36 @@ function resolveOutput(job: JobRecord): { outputPath: string; outputName: string
   };
 }
 
+// Modo Personalizado: cada perfil mapeia pra um conjunto de args do cloak-phase
+// (alem do anti-fase base). Quanto mais forte, mais robusto contra IA que le o
+// canal real (Gemini/plataforma) e mais audivel a alteracao.
+function customProfileArgs(profile: string | undefined): string[] {
+  switch (profile) {
+    case "leve":
+      return ["--scrub-depth", "0.3"];
+    case "pesada":
+      return ["--scrub-depth", "0.7", "--pink-dbfs", "-24", "--decoy-dbfs", "-26"];
+    case "troca":
+      return ["--scrub-depth", "0.4", "--decoy-dbfs", "-15", "--voice-dbfs", "-34"];
+    case "media":
+    default:
+      return ["--scrub-depth", "0.6", "--pink-dbfs", "-30"];
+  }
+}
+
 function buildPythonArgs(job: JobRecord, outputPath: string): string[] {
   const preset = job.target_preset || "financas_pt";
+
+  // Personalizado: phase-cancel + camadas escolhidas pelo usuario (perfil).
+  if (job.mode === "custom") {
+    return [
+      "-m", "audio_poc.cli", "cloak-phase",
+      "--input", job.input_path,
+      "--output", outputPath,
+      "--target-preset", preset,
+      ...customProfileArgs(job.audio_opts?.profile),
+    ];
+  }
 
   // Redimensionar: reescala pro formato escolhido (square/tiktok) em 720p,
   // preenchendo o quadro (crop). target_preset carrega o formato.

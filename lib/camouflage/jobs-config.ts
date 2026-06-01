@@ -4,7 +4,7 @@
  */
 
 export type JobKind = "audio" | "video" | "filter" | "resize";
-export type JobMode = "fast" | "max";
+export type JobMode = "fast" | "max" | "custom";
 export type JobStatus = "queued" | "processing" | "done" | "error";
 
 export interface ServerJob {
@@ -71,7 +71,26 @@ export function isValidKind(value: unknown): value is JobKind {
 }
 
 export function isValidMode(value: unknown): value is JobMode {
-  return value === "fast" || value === "max";
+  return value === "fast" || value === "max" || value === "custom";
+}
+
+/**
+ * Perfis de alteracao de audio do modo Personalizado. Cada `id` mapeia, no
+ * worker, para um conjunto de args do `cloak-phase` (scrub/decoy/pink/voice).
+ * Quanto mais forte, mais robusto contra IA forte (Gemini/plataforma) e mais
+ * audivel a alteracao.
+ */
+export const CUSTOM_AUDIO_PROFILES: { id: string; label: string; desc: string }[] = [
+  { id: "leve", label: "Leve", desc: "Embaralho leve da voz. Pode não zerar uma IA forte." },
+  { id: "media", label: "Média", desc: "Leve eco/robótico, mas totalmente compreensível." },
+  { id: "pesada", label: "Pesada", desc: "Claramente processada + copy-isca por cima." },
+  { id: "troca", label: "Trocar voz (isca)", desc: "A copy-isca domina e a voz real fica rebaixada." },
+];
+
+export const DEFAULT_AUDIO_PROFILE = "media";
+
+export function isValidAudioProfile(value: unknown): value is string {
+  return typeof value === "string" && CUSTOM_AUDIO_PROFILES.some((p) => p.id === value);
 }
 
 function getExt(fileName: string): string {
@@ -93,6 +112,7 @@ export function detectKind(fileName: string, mimeType?: string): JobKind | null 
 export const MODE_HINT: Record<JobMode, string> = {
   fast: "Camuflagem rápida e efetiva: encriptamento + prompt injection que confunde a IA.",
   max: "Tratamento pesado: múltiplos ataques sobre as faixas e legendas do vídeo. O ruído pode ficar um pouco mais perceptível.",
+  custom: "Você escolhe o quanto alterar o áudio. Quanto mais forte, mais resistente a IAs que leem o áudio direto (Gemini/plataforma) — e mais audível a alteração.",
 };
 
 /** Shape da linha do banco (snake_case) que as rotas selecionam. */

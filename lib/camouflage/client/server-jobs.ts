@@ -10,6 +10,7 @@ interface UploadOptions {
   targetPreset: string;
   kind?: JobKind;
   cover?: File | null;
+  audioProfile?: string;
 }
 
 /**
@@ -94,6 +95,7 @@ export function useServerJobs() {
         form.append("targetPreset", opts.targetPreset);
         if (opts.kind) form.append("kind", opts.kind);
         if (opts.cover) form.append("cover", opts.cover);
+        if (opts.audioProfile) form.append("audioProfile", opts.audioProfile);
         try {
           const res = await fetch("/api/camouflage/jobs", { method: "POST", body: form });
           const data = (await res.json().catch(() => ({}))) as { job?: ServerJob; error?: string };

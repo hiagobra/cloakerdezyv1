@@ -5,6 +5,8 @@ import { useServerJobs } from "@/lib/camouflage/client/server-jobs";
 import {
   WHITE_SCRIPT_PRESETS,
   DEFAULT_TARGET_PRESET,
+  CUSTOM_AUDIO_PROFILES,
+  DEFAULT_AUDIO_PROFILE,
   MODE_HINT,
   detectKind,
   type JobMode,
@@ -14,19 +16,27 @@ import { Dropzone, ModeSelector, SectionCard, ServerJobList, TargetPresetPicker 
 const MODES: { value: JobMode; label: string; desc: string }[] = [
   { value: "fast", label: "Rápido", desc: "Camuflagem rápida e efetiva: encriptamento + prompt injection que confunde a IA." },
   { value: "max", label: "Máximo (anti-IA)", desc: "Tratamento pesado: múltiplos ataques sobre as faixas e legendas do vídeo. O ruído pode ficar um pouco mais perceptível." },
+  { value: "custom", label: "Personalizado", desc: "Você escolhe o quanto alterar o áudio." },
 ];
 
 export function VideoSection() {
   const [mode, setMode] = useState<JobMode>("fast");
   const [preset, setPreset] = useState<string>(DEFAULT_TARGET_PRESET);
+  const [audioProfile, setAudioProfile] = useState<string>(DEFAULT_AUDIO_PROFILE);
   const { jobs, error, uploading, hasActive, uploadFiles, removeJob, clearFinished } = useServerJobs();
   const videoJobs = jobs.filter((j) => j.kind === "video");
 
   const onFiles = (files: File[]) => {
     const valid = files.filter((f) => detectKind(f.name, f.type) === "video");
     if (valid.length === 0) return;
-    void uploadFiles(valid, { mode, targetPreset: preset });
+    void uploadFiles(valid, {
+      mode,
+      targetPreset: preset,
+      audioProfile: mode === "custom" ? audioProfile : undefined,
+    });
   };
+
+  const profileDesc = CUSTOM_AUDIO_PROFILES.find((p) => p.id === audioProfile)?.desc;
 
   return (
     <SectionCard
@@ -36,6 +46,18 @@ export function VideoSection() {
       <div className="flex flex-wrap items-center gap-4">
         <ModeSelector value={mode} options={MODES} onChange={setMode} />
       </div>
+
+      {mode === "custom" ? (
+        <div className="mt-4">
+          <div className="mb-2 text-xs uppercase tracking-[0.18em] text-muted">Alteração do áudio</div>
+          <ModeSelector
+            value={audioProfile}
+            onChange={setAudioProfile}
+            options={CUSTOM_AUDIO_PROFILES.map((p) => ({ value: p.id, label: p.label, desc: p.desc }))}
+          />
+          {profileDesc ? <p className="mt-2 text-xs text-muted">{profileDesc}</p> : null}
+        </div>
+      ) : null}
 
       <div className="mt-4">
         <TargetPresetPicker presets={WHITE_SCRIPT_PRESETS} value={preset} onChange={setPreset} />

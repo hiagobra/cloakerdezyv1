@@ -191,10 +191,11 @@ create table if not exists public.camouflage_jobs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users (id) on delete cascade,
   kind text not null check (kind in ('audio', 'video', 'filter', 'resize')),
-  mode text not null default 'fast' check (mode in ('fast', 'max')),
+  mode text not null default 'fast' check (mode in ('fast', 'max', 'custom')),
   target_preset text,
   cover_path text,
   cover_name text,
+  audio_opts jsonb,
   status text not null default 'queued'
     check (status in ('queued', 'processing', 'done', 'error')),
   progress int not null default 0,
@@ -214,6 +215,7 @@ create table if not exists public.camouflage_jobs (
 -- nao re-aplica colunas/checks novos).
 alter table public.camouflage_jobs add column if not exists cover_path text;
 alter table public.camouflage_jobs add column if not exists cover_name text;
+alter table public.camouflage_jobs add column if not exists audio_opts jsonb;
 
 -- Recria o check do kind para incluir 'filter' (aba Filtros / desmark) e
 -- 'resize' (aba Redimensionar).
@@ -227,6 +229,19 @@ begin
   alter table public.camouflage_jobs
     add constraint camouflage_jobs_kind_check
     check (kind in ('audio', 'video', 'filter', 'resize'));
+end $$;
+
+-- Recria o check do mode para incluir 'custom' (modo Personalizado).
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint where conname = 'camouflage_jobs_mode_check'
+  ) then
+    alter table public.camouflage_jobs drop constraint camouflage_jobs_mode_check;
+  end if;
+  alter table public.camouflage_jobs
+    add constraint camouflage_jobs_mode_check
+    check (mode in ('fast', 'max', 'custom'));
 end $$;
 
 create index if not exists camouflage_jobs_user_idx on public.camouflage_jobs (user_id);
